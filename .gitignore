@@ -1,0 +1,10 @@
+node_modules
+dist
+demo-dist
+.env
+.firebase
+*.log
+
+# Built app files (not source)
+Claude outputs/
+*.apk

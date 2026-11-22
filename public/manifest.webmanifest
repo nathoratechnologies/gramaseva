@@ -1,0 +1,17 @@
+{
+  "name": "ഗ്രാമസേവ — Gramaseva",
+  "short_name": "ഗ്രാമസേവ",
+  "description": "നാടിന്റെ എല്ലാ സേവനങ്ങളും ഒരിടത്ത്: പണിക്കാർ, ഓട്ടോ/കാർ, ഗ്രാമവാർത്ത.",
+  "lang": "ml",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2e7d32",
+  "theme_color": "#2e7d32",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,373 @@
+rules_version = '2';
+
+// Gramaseva security rules.
+// Roles live in users/{uid}.role: 'user' | 'coordinator' | 'superadmin'.
+// The very first super admin is set by hand in the Firebase console (see SETUP_MALAYALAM.md).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myDoc() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasProfile() { return signedIn() && exists(myDoc()); }
+    function me() { return get(myDoc()).data; }
+    // Super admin: role superadmin, or the app owner's login (full control).
+    function isSuper() {
+      return (signedIn() && request.auth.token.get('email', '').lower() in ['upasnath@gramaseva.app'])
+        || (hasProfile() && me().role == 'superadmin');
+    }
+    // Panchayat president / vice president: approves ward members of their own panchayat.
+    function isHead() {
+      return hasProfile() && me().role == 'coordinator' && me().get('position', '') in ['president', 'vice'];
+    }
+    function myCoordVillage() { return me().get('coordinatorOf', ''); }
+    function isCoordOf(villageId) {
+      return hasProfile() && me().role == 'coordinator' && me().get('coordinatorOf', null) == villageId;
+    }
+    function isAdminOf(villageId) { return isSuper() || isCoordOf(villageId); }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    // The app owner (business login) sees and approves payments, ads and sellers. Keep in step with src/lib/owner.ts.
+    function isOwner() { return isSuper(); }
+    // Phone OTP users: the profile phone must be the verified number.
+    // Google users have no verified number: they type it (+91 and 10 digits); coordinators check it before approving providers.
+    function tokenPhone() { return request.auth.token.get('phone_number', ''); }
+    function phoneOk(p) {
+      return p is string && p.matches('^[+]91[6-9][0-9]{9}$') && (tokenPhone() == '' || p == tokenPhone());
+    }
+
+    // ---------- Villages: everyone can read, only super admin edits ----------
+    match /villages/{villageId} {
+      allow read: if true;
+      // Anyone signed in can add their own village from their phone's location; only the super admin edits or removes.
+      allow create: if isSuper() || (signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'nameEn', 'panchayat', 'district', 'status', 'lat', 'lng', 'createdBy'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status == 'live'
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && request.resource.data.nameEn is string && request.resource.data.nameEn.size() <= 80
+        && request.resource.data.panchayat is string && request.resource.data.panchayat.size() > 0 && request.resource.data.panchayat.size() <= 120
+        && request.resource.data.district is string && request.resource.data.district.size() > 0 && request.resource.data.district.size() <= 60
+        && request.resource.data.lat is number && request.resource.data.lng is number);
+      allow update, delete: if isSuper();
+    }
+
+    // ---------- Users ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdminOf(resource.data.villageId) || isSuper()
+        // coordinators see the other coordinators of their panchayat
+        || (hasProfile() && me().role == 'coordinator' && resource.data.get('coordinatorOf', '') == myCoordVillage()));
+      // A new user can only create their own profile, as a normal user, with their own verified phone number.
+      // The super admin may also make the profile for a president / VP / ward member login it created.
+      allow create: if isSuper() || (signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'user'
+        && request.resource.data.get('coordinatorOf', null) == null
+        && phoneOk(request.resource.data.phone)
+        && (!('email' in request.resource.data) || request.resource.data.email == request.auth.token.get('email', '').lower()));
+      // Users may edit their own profile but never their role or coordinator village;
+      // only users without an OTP-verified number may change their phone.
+      allow update: if signedIn() && (
+        (request.auth.uid == uid && !changed().hasAny(['role', 'coordinatorOf', 'position'])
+          && (!changed().hasAny(['phone']) || (tokenPhone() == '' && phoneOk(request.resource.data.phone))))
+        || isSuper()
+        // President / VP: make a person a ward member of their panchayat, or remove a ward member.
+        || (isHead() && request.auth.uid != uid && changed().hasOnly(['role', 'coordinatorOf', 'position']) && (
+          (resource.data.role == 'user' && request.resource.data.role == 'coordinator'
+            && request.resource.data.coordinatorOf == myCoordVillage() && request.resource.data.position == 'member')
+          || (resource.data.role == 'coordinator' && resource.data.get('coordinatorOf', '') == myCoordVillage()
+            && resource.data.get('position', 'member') == 'member'
+            && request.resource.data.role == 'user' && request.resource.data.coordinatorOf == null)))
+      );
+      allow delete: if signedIn() && (request.auth.uid == uid || isSuper());
+    }
+
+    // ---------- Requests to become a village admin (one per user; id = uid) ----------
+    match /roleRequests/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isSuper()
+        || (isHead() && resource.data.villageId == myCoordVillage()));
+      allow create: if hasProfile() && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.position is string && request.resource.data.position.size() <= 80
+        && request.resource.data.note is string && request.resource.data.note.size() <= 300;
+      // The person may resend after a decline; only the super admin approves or declines.
+      allow update: if isSuper()
+        || (isHead() && resource.data.villageId == myCoordVillage() && changed().hasOnly(['status'])
+          && request.resource.data.status in ['approved', 'rejected'])
+        || (hasProfile() && request.auth.uid == uid
+        && resource.data.status == 'rejected'
+        && request.resource.data.uid == uid
+        && request.resource.data.status == 'pending');
+      allow delete: if isSuper();
+    }
+
+    // ---------- Service providers (workers and drivers) ----------
+    match /providers/{uid} {
+      // Approved providers are public; pending ones are visible to themselves and their coordinator.
+      allow read: if resource.data.status == 'approved'
+        || (signedIn() && (request.auth.uid == uid || isAdminOf(resource.data.villageId)));
+      // The super admin adds workers / drivers / shops from the panchayat's Excel sheet (ids start with imp_).
+      allow create: if (isSuper() && uid.matches('imp_.*') && request.resource.data.imported == true)
+        || (signedIn() && request.auth.uid == uid
+        && request.resource.data.status == 'approved'
+        && request.resource.data.verified == false
+        && request.resource.data.ratingSum == 0
+        && request.resource.data.ratingCount == 0
+        && request.resource.data.phone == get(myDoc()).data.phone);
+      allow update: if signedIn() && (
+        // The provider edits their own details (not status, verification, rating or phone).
+        (request.auth.uid == uid
+          && !changed().hasAny(['status', 'verified', 'ratingSum', 'ratingCount', 'lastReviewId', 'phone']))
+        // Coordinator / super admin approves, verifies or blocks.
+        || isAdminOf(resource.data.villageId)
+        // A customer adds a rating: only together with a brand-new review for this provider.
+        || (changed().hasOnly(['ratingSum', 'ratingCount', 'lastReviewId'])
+          && request.resource.data.lastReviewId != resource.data.get('lastReviewId', '')
+          && !exists(/databases/$(database)/documents/reviews/$(request.resource.data.lastReviewId))
+          && existsAfter(/databases/$(database)/documents/reviews/$(request.resource.data.lastReviewId))
+          && getAfter(/databases/$(database)/documents/reviews/$(request.resource.data.lastReviewId)).data.providerId == uid
+          && getAfter(/databases/$(database)/documents/reviews/$(request.resource.data.lastReviewId)).data.customerId == request.auth.uid
+          && request.resource.data.ratingCount == resource.data.ratingCount + 1
+          && request.resource.data.ratingSum - resource.data.ratingSum
+             == getAfter(/databases/$(database)/documents/reviews/$(request.resource.data.lastReviewId)).data.stars)
+      );
+      // A blocked provider cannot delete and re-register to escape the block.
+      allow delete: if signedIn() && ((request.auth.uid == uid && resource.data.status != 'blocked') || isAdminOf(resource.data.villageId));
+    }
+
+    // ---------- Reviews: one per finished booking (review id = booking id) ----------
+    match /reviews/{bookingId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && get(/databases/$(database)/documents/bookings/$(bookingId)).data.customerId == request.auth.uid
+        && get(/databases/$(database)/documents/bookings/$(bookingId)).data.providerId == request.resource.data.providerId
+        && get(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'done';
+      allow delete: if isSuper();
+    }
+
+    // ---------- News ----------
+    match /news/{newsId} {
+      allow read: if resource.data.status == 'published' || isAdminOf(resource.data.villageId);
+      // Coordinators publish directly; any signed-in user may suggest news (waits for approval).
+      allow create: if isAdminOf(request.resource.data.villageId)
+        || (hasProfile() && request.resource.data.status == 'pending' && request.resource.data.postedBy == request.auth.uid);
+      allow update, delete: if isAdminOf(resource.data.villageId);
+    }
+
+    // ---------- Bookings ----------
+    match /bookings/{bookingId} {
+      allow read: if signedIn() && (
+        resource.data.customerId == request.auth.uid
+        || resource.data.providerId == request.auth.uid
+        || isAdminOf(resource.data.villageId));
+      allow create: if hasProfile()
+        && request.resource.data.customerId == request.auth.uid
+        // Nobody books (and then rates) their own provider profile.
+        && request.resource.data.providerId != request.auth.uid
+        && request.resource.data.status == 'requested'
+        && request.resource.data.rated == false;
+      allow update: if signedIn() && (
+        // Provider answers or completes.
+        (resource.data.providerId == request.auth.uid
+          && changed().hasOnly(['status'])
+          && ((resource.data.status == 'requested' && request.resource.data.status in ['accepted', 'rejected'])
+            || (resource.data.status == 'accepted' && request.resource.data.status == 'done')))
+        // Customer cancels an open booking, marks an accepted one done, or marks a finished one rated.
+        // (A request the provider never accepted can't be marked done, so it can't get a rating.)
+        || (resource.data.customerId == request.auth.uid
+          && changed().hasOnly(['status', 'rated'])
+          && (request.resource.data.status == resource.data.status
+            || (resource.data.status in ['requested', 'accepted'] && request.resource.data.status == 'cancelled')
+            || (resource.data.status == 'accepted' && request.resource.data.status == 'done')))
+      );
+      allow delete: if isSuper();
+    }
+
+    // ---------- Directory: hospitals, schools, ASHA workers, offices ----------
+    function contactOk(d) {
+      return d.kind in ['hospital', 'school', 'asha', 'office']
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.phone is string && d.phone.size() >= 5 && d.phone.size() <= 20
+        && d.villageId is string;
+    }
+    match /contacts/{id} {
+      allow read: if resource.data.status == 'approved' || isAdminOf(resource.data.villageId)
+        || (signedIn() && resource.data.get('uid', '') == request.auth.uid);
+      // Ward members / admins add directly; an ASHA worker may list herself, waiting for approval.
+      allow create: if contactOk(request.resource.data) && (
+        (isAdminOf(request.resource.data.villageId) && request.resource.data.createdBy == request.auth.uid)
+        || (hasProfile() && request.resource.data.kind == 'asha' && request.resource.data.status == 'pending'
+            && request.resource.data.uid == request.auth.uid && request.resource.data.createdBy == request.auth.uid));
+      allow update: if contactOk(request.resource.data) && isAdminOf(resource.data.villageId)
+        && request.resource.data.villageId == resource.data.villageId;
+      allow delete: if isAdminOf(resource.data.villageId) || (signedIn() && resource.data.get('uid', '') == request.auth.uid);
+    }
+
+    // ---------- Train / bus / boat timings ----------
+    match /timings/{id} {
+      allow read: if true;
+      // Train and boat: ward members / admins. Bus: anyone signed in can add.
+      allow create: if hasProfile()
+        && request.resource.data.addedBy == request.auth.uid
+        && request.resource.data.mode in ['train', 'bus', 'boat']
+        && request.resource.data.time is string && request.resource.data.time.matches('^[0-2][0-9]:[0-5][0-9]$')
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && (request.resource.data.mode == 'bus' || isAdminOf(request.resource.data.villageId));
+      allow delete: if isAdminOf(resource.data.villageId) || (signedIn() && resource.data.addedBy == request.auth.uid);
+    }
+
+    // ---------- Blood donors (id = uid): visible to signed-in users ----------
+    match /bloodDonors/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.group in ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
+        && phoneOk(request.resource.data.phone);
+      allow delete: if signedIn() && (request.auth.uid == uid || isAdminOf(resource.data.villageId));
+    }
+
+    // ---------- Resident messages to ward members (private: sender + village coordinators) ----------
+    match /complaints/{id} {
+      allow create: if hasProfile()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.status == 'open'
+        && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 1500
+        && !('reply' in request.resource.data)
+        && (!('photo' in request.resource.data) || (request.resource.data.photo is string && request.resource.data.photo.size() <= 250000));
+      allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || isAdminOf(resource.data.villageId));
+      // Ward member / president answers or closes it.
+      allow update: if isAdminOf(resource.data.villageId)
+        && changed().hasOnly(['reply', 'repliedByName', 'repliedAt', 'status'])
+        && request.resource.data.status in ['open', 'replied', 'resolved'];
+      allow delete: if isSuper() || (signedIn() && resource.data.fromUid == request.auth.uid);
+    }
+
+    // ---------- Complaints about providers ----------
+    match /reports/{reportId} {
+      allow create: if hasProfile()
+        && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.status == 'open';
+      allow read, update: if isAdminOf(resource.data.villageId);
+      allow delete: if isSuper();
+    }
+
+    // Weekly fee for a payment purpose: the owner's setting, or the default.
+    function feeFor(purpose) {
+      let key = purpose == 'ad' ? 'adFee' : (purpose == 'delivery' ? 'deliveryFee' : 'sellerFee');
+      let dflt = purpose == 'ad' ? 50 : (purpose == 'delivery' ? 15 : 10);
+      return exists(/databases/$(database)/documents/settings/pay)
+        ? get(/databases/$(database)/documents/settings/pay).data.get(key, dflt) : dflt;
+    }
+    function boyIsActive(uid) {
+      return get(/databases/$(database)/documents/deliveryBoys/$(uid)).data.status == 'active';
+    }
+    // A delivery boy is free unless a one-time job he accepted (busyWith) is still open with him.
+    function boyIsFree(uid, id) {
+      let bw = get(/databases/$(database)/documents/deliveryBoys/$(uid)).data.get('busyWith', '');
+      return bw == '' || bw == id
+        || !exists(/databases/$(database)/documents/deliveries/$(bw))
+        || !(get(/databases/$(database)/documents/deliveries/$(bw)).data.deliveryUid == uid
+          && get(/databases/$(database)/documents/deliveries/$(bw)).data.status in ['accepted', 'picked']);
+    }
+
+    // ---------- Delivery boys (id = uid): join as pending; only the owner approves, suspends or removes ----------
+    match /deliveryBoys/{uid} {
+      allow read: if signedIn();
+      allow create: if hasProfile() && request.auth.uid == uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.paidUntil == 0 && request.resource.data.freeUntil == 0
+        && !('warning' in request.resource.data);
+      allow update: if isOwner() || (signedIn() && request.auth.uid == uid
+        && !changed().hasAny(['status', 'warning', 'freeUntil', 'paidUntil', 'createdAt']));
+      allow delete: if isOwner();
+    }
+    // ---------- Delivery jobs (id = enquiry id): shop, delivery boy, customer and owner can see ----------
+    match /deliveries/{id} {
+      allow read: if signedIn() && (resource == null || resource.data.shopUid == request.auth.uid || resource.data.deliveryUid == request.auth.uid
+        || resource.data.customerUid == request.auth.uid || isOwner());
+      allow create: if hasProfile() && request.resource.data.shopUid == request.auth.uid
+        && request.resource.data.enquiryId == id
+        && get(/databases/$(database)/documents/enquiries/$(id)).data.toUid == request.auth.uid
+        && request.resource.data.status == 'assigned' && request.resource.data.deliveredCount == 0
+        && boyIsActive(request.resource.data.deliveryUid) && boyIsFree(request.resource.data.deliveryUid, id);
+      allow update: if signedIn() && (
+        isOwner()
+        // The shop re-assigns or cancels.
+        || (resource.data.shopUid == request.auth.uid
+          && changed().hasOnly(['deliveryUid', 'deliveryName', 'deliveryPhone', 'status', 'updatedAt', 'pickupAddress', 'pickupLat', 'pickupLng'])
+          && (request.resource.data.status == 'cancelled'
+            || (request.resource.data.status == 'assigned' && boyIsActive(request.resource.data.deliveryUid)
+              && (request.resource.data.deliveryUid == resource.data.deliveryUid || boyIsFree(request.resource.data.deliveryUid, id)))))
+        // The delivery boy accepts, picks up, delivers (daily orders: one count per delivery) or refuses.
+        || (resource.data.deliveryUid == request.auth.uid && boyIsActive(request.auth.uid)
+          && changed().hasOnly(['status', 'updatedAt', 'deliveredCount', 'lastDeliveredAt', 'log'])
+          && request.resource.data.get('log', []).size() <= resource.data.get('log', []).size() + 1
+          && request.resource.data.status in ['accepted', 'picked', 'delivered', 'rejected']
+          && request.resource.data.deliveredCount >= resource.data.deliveredCount
+          && request.resource.data.deliveredCount <= resource.data.deliveredCount + 1)
+      );
+      allow delete: if false;
+    }
+
+    // ---------- Orders / enquiries: only the customer and the shop / seller can see them ----------
+    match /enquiries/{id} {
+      allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if hasProfile() && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'new' && request.resource.data.replies.size() == 0
+        && request.resource.data.items is string && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 300
+        && request.resource.data.freq in ['once', 'daily', 'weekly', 'monthly'];
+      allow update: if signedIn() && changed().hasOnly(['status', 'replies', 'updatedAt'])
+        && request.resource.data.replies.size() <= resource.data.replies.size() + 1
+        && (
+          (resource.data.toUid == request.auth.uid && request.resource.data.status in ['new', 'replied', 'accepted', 'declined', 'done'])
+          || (resource.data.fromUid == request.auth.uid && request.resource.data.status in [resource.data.status, 'cancelled'])
+        );
+      allow delete: if false;
+    }
+
+    // ---------- Market, ads and payments ----------
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+    match /sellers/{uid} {
+      allow read: if true;
+      // A new seller starts with a free period (at most 31 days) and nothing paid.
+      allow create: if hasProfile() && request.auth.uid == uid
+        && request.resource.data.paidUntil == 0
+        && request.resource.data.freeUntil is number
+        && request.resource.data.freeUntil <= request.time.toMillis() + 31 * 86400000;
+      allow update: if isOwner() || (signedIn() && request.auth.uid == uid && !changed().hasAny(['paidUntil', 'freeUntil', 'createdAt']));
+      allow delete: if isOwner();
+    }
+    match /listings/{id} {
+      allow read: if true;
+      allow create: if hasProfile() && request.resource.data.sellerUid == request.auth.uid
+        && exists(/databases/$(database)/documents/sellers/$(request.auth.uid))
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 80;
+      allow update: if signedIn() && ((resource.data.sellerUid == request.auth.uid && request.resource.data.sellerUid == request.auth.uid)
+        || isOwner() || isAdminOf(resource.data.villageId));
+      allow delete: if signedIn() && (resource.data.sellerUid == request.auth.uid || isOwner() || isAdminOf(resource.data.villageId));
+    }
+    match /ads/{id} {
+      allow read: if resource.data.status == 'live' || (signedIn() && (resource.data.uid == request.auth.uid || isOwner()));
+      allow create: if hasProfile() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'pending' && request.resource.data.until == 0;
+      // A live ad can't be edited by the shop (so approved content stays as approved); delete and re-create instead.
+      allow update: if isOwner() || (signedIn() && resource.data.uid == request.auth.uid && resource.data.status != 'live' && !changed().hasAny(['status', 'until', 'uid']));
+      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isOwner());
+    }
+    match /payments/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isOwner());
+      allow create: if isOwner() || (hasProfile() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.weeks is int && request.resource.data.weeks >= 1 && request.resource.data.weeks <= 52
+        && request.resource.data.purpose in ['seller', 'ad', 'delivery']
+        // The amount must match the owner's current weekly fee (Business panel → Settings).
+        && request.resource.data.amount == request.resource.data.weeks * feeFor(request.resource.data.purpose)
+        && request.resource.data.utr is string && request.resource.data.utr.size() >= 6 && request.resource.data.utr.size() <= 40);
+      allow update, delete: if isOwner();
+    }
+  }
+}

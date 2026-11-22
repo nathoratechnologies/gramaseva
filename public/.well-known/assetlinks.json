@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.web.gramaseva_b2724.twa",
+        "sha256_cert_fingerprints": ["A3:D4:A4:B6:DB:92:7A:98:B9:C7:4D:CA:42:97:BA:4F:73:B6:2C:E4:7D:31:7A:59:BD:7B:AE:7F:E9:93:0F:9E"]
+      }
+    }]
