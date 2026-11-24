@@ -105,6 +105,12 @@ export function LanguageStep({ onDone }: { onDone: () => void }) {
   );
 }
 
+/**
+ * Firebase SMS OTP needs the Blaze (billing) plan. Until that is on, the option stays hidden in the real app
+ * (it only showed an error). Turn it back on with VITE_PHONE_OTP=1 in .env. The demo always shows it.
+ */
+const PHONE_OTP_ON = import.meta.env.VITE_PHONE_OTP === '1' || !import.meta.env.VITE_FIREBASE_API_KEY || import.meta.env.VITE_DEMO === '1';
+
 export function LoginStep() {
   const { api, L, toast } = useApp();
   const [phone, setPhone] = useState('');
@@ -303,7 +309,7 @@ export function LoginStep() {
           </>
         ) : !showPhone ? (
           <div className="stack" style={{ alignItems: 'center', gap: 14 }}>
-            <button className="link" onClick={() => setShowPhone(true)}>{L('ഫോൺ നമ്പർ + OTP ഉപയോഗിക്കുക', 'Use phone number + OTP instead')}</button>
+            {PHONE_OTP_ON && <button className="link" onClick={() => setShowPhone(true)}>{L('ഫോൺ നമ്പർ + OTP ഉപയോഗിക്കുക', 'Use phone number + OTP instead')}</button>}
             <button className="link" style={{ color: 'var(--muted)', fontWeight: 600 }} onClick={() => setShowEmail(true)}>{L('Admin login (email + password)', 'Admin login (email + password)')}</button>
           </div>
         ) : (
