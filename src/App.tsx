@@ -12,6 +12,7 @@ import { Business } from './screens/Business';
 import { OrderForm, Orders } from './screens/Orders';
 import { DeliveryBoys, DeliveryHome, DeliveryJoin } from './screens/Delivery';
 import { CartScreen, Store } from './screens/Store';
+import { TrackDelivery } from './screens/Track';
 import { ComplaintForm, Complaints } from './screens/Complaints';
 import { BookingRequest, ProviderProfile, ReportProvider, Services, WorkerList } from './screens/Workers';
 import { Drivers, Ride } from './screens/Ride';
@@ -112,6 +113,7 @@ function Shell() {
         <Route path="/delivery" element={<DeliveryHome />} />
         <Route path="/delivery/join" element={<DeliveryJoin />} />
         <Route path="/delivery/boys" element={<DeliveryBoys />} />
+        <Route path="/track/:id" element={<TrackDelivery />} />
         <Route path="/complaints" element={<Complaints />} />
         <Route path="/complaints/new" element={<ComplaintForm />} />
         <Route path="/blood" element={<BloodDonors />} />

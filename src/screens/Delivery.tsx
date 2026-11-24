@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Bike, MapPin, Navigation, Package, Phone, Store, Truck, UserCheck } from 'lucide-react';
 import { useApp, useLoad } from '../lib/app';
@@ -6,7 +6,7 @@ import { CallWhatsApp, Empty, LoadError, Loading, Screen } from '../components/u
 import { getPosition } from '../lib/geo';
 import { isPlayApp } from '../lib/store';
 import { sortedWards, wardLabel } from '../lib/panchayat';
-import { mapsEmbed, mapsLink, prettyDate, prettyPhone, telHref, timeAgo } from '../lib/util';
+import { km, mapsEmbed, mapsLink, prettyDate, prettyPhone, telHref, timeAgo } from '../lib/util';
 import { boyActive, inMonth, statAvg, type RatingStat, type Delivery, type DeliveryBoy, type DeliveryStatus, type DeliveryVehicle, type Enquiry } from '../types';
 import { FREQ_LABEL } from './Orders';
 import { usePay } from './Market';
@@ -71,6 +71,49 @@ export function DeliveryJoin() {
   );
 }
 
+/**
+ * While the delivery person has an accepted / picked-up job and this screen is open, send the phone's position
+ * every ~15 s (less when standing still), so the shop and the customer can follow it. Keeps the screen awake.
+ */
+function useShareLocation(ids: string[]) {
+  const { api } = useApp();
+  const [state, setState] = useState<{ at?: number; error?: 'denied' | 'gps' | 'send' }>({});
+  const key = ids.join(',');
+  useEffect(() => {
+    if (!ids.length || !navigator.geolocation) return;
+    let last = { t: 0, lat: 0, lng: 0 };
+    let lock: { release: () => Promise<void> } | null = null;
+    const wake = async () => {
+      try { lock = await (navigator as unknown as { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen') ?? null; } catch { /* not supported */ }
+    };
+    const send = (lat: number, lng: number) => {
+      last = { t: Date.now(), lat, lng };
+      Promise.all(ids.map((id) => api.trackLocation(id, { lat, lng })))
+        .then(() => setState({ at: Date.now() }))
+        .catch((e) => { console.error(e); setState((s) => ({ ...s, error: 'send' })); });
+    };
+    const w = navigator.geolocation.watchPosition((p) => {
+      const lat = Math.round(p.coords.latitude * 1e5) / 1e5, lng = Math.round(p.coords.longitude * 1e5) / 1e5;
+      const since = Date.now() - last.t;
+      const moved = last.t ? km(last, { lat, lng }) * 1000 : Infinity;
+      if (last.t && (since < 15000 || (since < 60000 && moved < 25))) return;
+      send(lat, lng);
+    }, (e) => setState((s) => ({ ...s, error: e.code === 1 ? 'denied' : 'gps' })), { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
+    // Standing still (at the shop / gate): still say "I'm here" every minute so the map doesn't look stale.
+    const beat = window.setInterval(() => { if (last.t && Date.now() - last.t > 60000) send(last.lat, last.lng); }, 20000);
+    void wake();
+    const onVis = () => { if (document.visibilityState === 'visible') void wake(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      navigator.geolocation.clearWatch(w); window.clearInterval(beat);
+      document.removeEventListener('visibilitychange', onVis);
+      lock?.release().catch(() => undefined);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return state;
+}
+
 /** The delivery boy's own screen: status, fee and delivery jobs. */
 export function DeliveryHome() {
   const { api, profile, lang, L, pair, toast } = useApp();
@@ -87,6 +130,8 @@ export function DeliveryHome() {
     return { boy, jobs, stat: stats[profile.uid] };
   }, [profile?.uid ?? '']);
   const [showReviews, setShowReviews] = useState(false);
+  const liveIds = (data?.boy?.status === 'active' ? data.jobs : []).filter((j) => j.status === 'accepted' || j.status === 'picked').map((j) => j.id);
+  const share = useShareLocation(liveIds);
   const [filter, setFilter] = useState<'open' | 'all'>('open');
   if (!profile) return null;
   if (err) return <Screen title={L('ഡെലിവറി', 'Delivery')}><LoadError retry={reload} /></Screen>;
@@ -131,6 +176,16 @@ export function DeliveryHome() {
             {!play && <Link className="btn sm outline" to="/pay?for=delivery">{L('ആഴ്ച fee അടയ്ക്കുക', 'Pay weekly fee')}</Link>}
           </div>
           {!active && play && <p className="small muted">{L('പുതുക്കാൻ Gramaseva admin-നെ നേരിട്ട് കാണുക.', 'Meet the Gramaseva admin to renew.')}</p>}
+        </div>
+      )}
+      {liveIds.length > 0 && (
+        <div className={'notice ' + (share.error ? 'bad' : '')} style={{ display: 'block' }}>
+          {share.error === 'denied'
+            ? <b>{L('Location അനുമതി ഇല്ല. Phone settings-ൽ ഈ app-ന് location അനുവദിക്കുക — കടക്കാരനും ആവശ്യക്കാരനും നിങ്ങളെ map-ൽ കാണാൻ.', 'Location permission is off. Allow location for this app in phone settings so the shop and customer can see you on the map.')}</b>
+            : share.error === 'gps'
+              ? <b>{L('GPS കിട്ടുന്നില്ല. Phone-ലെ location ഓൺ ആക്കുക.', "Can't get GPS. Turn on location on your phone.")}</b>
+              : <><b>📍 {L('Live location അയയ്ക്കുന്നു', 'Sharing live location')}</b>{share.at ? <span className="small"> · {timeAgo(share.at, lang)}</span> : null}</>}
+          <div className="small">{L('ഡെലിവറി കഴിയുന്നത് വരെ ഈ screen തുറന്ന് വെക്കുക. App അടച്ചാൽ location പോകില്ല.', 'Keep this screen open until delivered. Location stops if the app is closed.')}</div>
         </div>
       )}
       <div className="chips">
@@ -287,6 +342,7 @@ export function AssignDelivery({ e, d, onChange }: { e: Enquiry; d: Delivery | u
           </span>
           <span className="row" style={{ gap: 6 }}>
             <a className="btn sm" href={telHref(d.deliveryPhone)} aria-label={L('വിളിക്കുക', 'Call')}><Phone size={16} /></a>
+            {(d.status === 'accepted' || d.status === 'picked') && <Link className="btn sm" to={`/track/${d.id}`} aria-label={L('Live ട്രാക്ക്', 'Track live')}><MapPin size={16} /></Link>}
             {d.status !== 'delivered' && <button className="btn sm outline" onClick={() => setOpen(!open)}>{L('മാറ്റുക', 'Change')}</button>}
             {d.status !== 'delivered' && <button className="btn sm danger" onClick={async () => { if (confirm(L('ഡെലിവറി റദ്ദാക്കണോ?', 'Cancel this delivery?'))) { await api.updateDelivery(d.id, { status: 'cancelled' }); onChange(); } }}>{L('റദ്ദാക്കുക', 'Cancel')}</button>}
           </span>
@@ -329,6 +385,9 @@ export function DeliveryInfo({ d }: { d: Delivery | undefined }) {
   return (
     <div className="small" style={{ marginTop: 8, padding: 8, borderRadius: 10, background: '#fff8e1' }}>
       <Truck size={14} aria-hidden /> {L('ഡെലിവറി', 'Delivery')}: <b>{d.deliveryName}</b> · <a className="link" href={telHref(d.deliveryPhone)}>{showPhone(d.deliveryPhone)}</a> · <span className={DSTATUS[d.status][2]}>{lang === 'ml' ? DSTATUS[d.status][0] : DSTATUS[d.status][1]}</span>
+      {(d.status === 'accepted' || d.status === 'picked') && (
+        <Link className="btn sm block" style={{ marginTop: 8 }} to={`/track/${d.id}`}><MapPin size={16} aria-hidden /> {L('Live ആയി എവിടെ എത്തി എന്ന് കാണുക', 'Track live on the map')}</Link>
+      )}
     </div>
   );
 }

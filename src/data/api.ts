@@ -164,6 +164,10 @@ export interface Api {
   /** Shop / seller hands an order to a delivery boy (creates the job, or re-assigns an existing one). */
   assignDelivery(d: Delivery): Promise<void>;
   updateDelivery(id: string, patch: Partial<Delivery>): Promise<void>;
+  /** The delivery person's phone sends where it is now (live tracking). */
+  trackLocation(id: string, at: { lat: number; lng: number }): Promise<void>;
+  /** Live updates of one delivery (shop, customer, delivery person). Returns stop(). */
+  watchDelivery(id: string, cb: (d: Delivery | null) => void): () => void;
   listDeliveries(by: 'shopUid' | 'deliveryUid' | 'customerUid' | null, uid?: string): Promise<Delivery[]>; // null = all (owner)
 
   bulkImport(village: Village | null, providers: Provider[], contacts: Contact[], onProgress?: (done: number, total: number) => void): Promise<void>;

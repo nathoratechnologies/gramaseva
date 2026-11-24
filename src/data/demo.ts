@@ -459,6 +459,27 @@ export function createDemoApi(): Api {
       saveExtra();
     },
     async updateDelivery(did, patch) { extra.deliveries = extra.deliveries.map((x) => (x.id === did ? { ...x, ...patch, id: did, updatedAt: Date.now() } : x)); saveExtra(); },
+    async trackLocation(did, at) {
+      extra.deliveries = extra.deliveries.map((x) => (x.id === did ? { ...x, liveLat: at.lat, liveLng: at.lng, liveAt: Date.now() } : x));
+      saveExtra();
+    },
+    watchDelivery(did, cb) {
+      const send = () => {
+        // Demo: the bike moves a little towards the customer each time.
+        let d = extra.deliveries.find((x) => x.id === did) ?? null;
+        if (d && (d.status === 'accepted' || d.status === 'picked') && d.lat != null && d.lng != null) {
+          const from = d.liveLat != null ? { lat: d.liveLat, lng: d.liveLng! } : { lat: d.pickupLat ?? d.lat + 0.02, lng: d.pickupLng ?? d.lng + 0.02 };
+          d = { ...d, liveLat: from.lat + (d.lat - from.lat) * 0.15, liveLng: from.lng + (d.lng - from.lng) * 0.15, liveAt: Date.now() };
+          const next = d;
+          extra.deliveries = extra.deliveries.map((x) => (x.id === did ? next : x));
+          saveExtra();
+        }
+        cb(d ? structuredClone(d) : null);
+      };
+      send();
+      const t = setInterval(send, 3000);
+      return () => clearInterval(t);
+    },
     async listDeliveries(by, uid) {
       return wait(extra.deliveries.filter((d) => !by || d[by] === uid).sort((a, b) => b.updatedAt - a.updatedAt));
     },

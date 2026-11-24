@@ -8,7 +8,7 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where,
-  getDocs, getCountFromServer, writeBatch, increment, documentId, arrayUnion, type QueryConstraint,
+  getDocs, getCountFromServer, writeBatch, onSnapshot, increment, documentId, arrayUnion, type QueryConstraint,
 } from 'firebase/firestore';
 import type { Api } from './api';
 import { byNewest } from './api';
@@ -562,6 +562,15 @@ export function createFirebaseApi(): Api {
     async updateDelivery(id, patch) {
       const { id: _i, ...rest } = patch; void _i;
       await updateDoc(doc(db, 'deliveries', id), { ...rest, updatedAt: Date.now() });
+    },
+    async trackLocation(id, at) {
+      // Not named update*: a position every few seconds must not empty the read cache each time.
+      await updateDoc(doc(db, 'deliveries', id), { liveLat: at.lat, liveLng: at.lng, liveAt: Date.now() });
+    },
+    watchDelivery(id, cb) {
+      return onSnapshot(doc(db, 'deliveries', id),
+        (s) => cb(s.exists() ? ({ ...(s.data() as object), id: s.id } as Delivery) : null),
+        (e) => { console.error(e); cb(null); });
     },
     async listDeliveries(by, uid) {
       const r = by ? await many<Delivery>('deliveries', where(by, '==', uid)) : await many<Delivery>('deliveries');

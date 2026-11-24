@@ -359,7 +359,8 @@ service cloud.firestore {
               && (request.resource.data.deliveryUid == resource.data.deliveryUid || boyIsFree(request.resource.data.deliveryUid, id)))))
         // The delivery boy accepts, picks up, delivers (daily orders: one count per delivery) or refuses.
         || (resource.data.deliveryUid == request.auth.uid && boyIsActive(request.auth.uid)
-          && changed().hasOnly(['status', 'updatedAt', 'deliveredCount', 'lastDeliveredAt', 'log'])
+          && changed().hasOnly(['status', 'updatedAt', 'deliveredCount', 'lastDeliveredAt', 'log', 'liveLat', 'liveLng', 'liveAt'])
+          && (!changed().hasAny(['liveLat', 'liveLng']) || (request.resource.data.liveLat is number && request.resource.data.liveLng is number))
           && request.resource.data.get('log', []).size() <= resource.data.get('log', []).size() + 1
           && request.resource.data.status in ['accepted', 'picked', 'delivered', 'rejected']
           && request.resource.data.deliveredCount >= resource.data.deliveredCount

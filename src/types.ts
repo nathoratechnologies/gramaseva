@@ -468,6 +468,10 @@ export interface Delivery {
   log?: number[]; // time of each delivery (for monthly bills)
   itemsTotal?: number; // ₹ to collect for the goods (give to the shop)
   deliveryFee?: number; // ₹ the delivery person keeps, per delivery
+  /** Live position of the delivery person while the job is open (sent from their phone every ~15 s). */
+  liveLat?: number;
+  liveLng?: number;
+  liveAt?: number;
   createdAt: number;
   updatedAt: number;
 }

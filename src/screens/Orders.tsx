@@ -6,7 +6,7 @@ import { Empty, LoadError, Loading, Screen } from '../components/ui';
 import { prettyPhone, telHref, timeAgo, waHref } from '../lib/util';
 import { ORDER_FREQS, inMonth, type Delivery, type Enquiry, type EnquiryStatus, type OrderFreq } from '../types';
 import { AssignDelivery, DeliveryInfo } from './Delivery';
-import { getPosition } from '../lib/geo';
+import { HomeLocation } from '../components/HomeLocation';
 import { RateOrder, canRateDelivery, canRateShop, reviewId } from './Reviews';
 
 export const FREQ_LABEL: Record<OrderFreq, [string, string]> = {
@@ -92,9 +92,7 @@ export function OrderForm() {
       {f.delivery && (<>
         <label htmlFor="oa">{L('വിലാസം (വീട്ടുപേര്, സ്ഥലം, അടയാളം)', 'Address (house name, place, landmark)')}</label>
         <textarea id="oa" className="input" rows={2} maxLength={300} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
-        <button className="btn outline" onClick={async () => { try { setLoc(await getPosition()); toast(L('Location ചേർത്തു', 'Location added')); } catch { toast(L('Location കിട്ടിയില്ല. Phone-ലെ location ഓൺ ആക്കുക.', "Couldn't get location. Turn on location on your phone.")); } }}>
-          <MapPin size={16} aria-hidden /> {loc ? L('വീടിന്റെ location ചേർത്തു ✓', 'Home location added ✓') : L('📍 എന്റെ വീടിന്റെ location ചേർക്കുക (map-ൽ കാണിക്കാൻ)', '📍 Add my home location (for the map)')}
-        </button>
+        <HomeLocation loc={loc} setLoc={setLoc} />
       </>)}
       <label htmlFor="op">{L('ഫോൺ നമ്പർ', 'Phone number')}</label>
       <input id="op" className="input" inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />

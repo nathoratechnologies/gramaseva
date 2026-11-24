@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { MapPin, Minus, Plus, Search, ShoppingCart, Store as StoreIcon, Trash2, Truck } from 'lucide-react';
 import { useApp, useLoad } from '../lib/app';
 import { BottomNav, Empty, LoadError, Loading, Screen } from '../components/ui';
-import { getPosition } from '../lib/geo';
+import { HomeLocation } from '../components/HomeLocation';
 import { km } from '../lib/util';
 import { LISTING_CATS, ORDER_FREQS, deliveryCharge, sellerActive, type Listing, type ListingCat, type OrderFreq } from '../types';
 import { ITEM_LABEL, usePay } from './Market';
@@ -234,9 +234,7 @@ export function CartScreen() {
       {delivery && (<>
         <label htmlFor="ca">{L('വിലാസം (വീട്ടുപേര്, സ്ഥലം, അടയാളം)', 'Address (house name, place, landmark)')}</label>
         <textarea id="ca" className="input" rows={2} maxLength={300} value={address} onChange={(e) => setAddress(e.target.value)} />
-        <button className="btn outline" onClick={async () => { try { setLoc(await getPosition()); toast(L('Location ചേർത്തു', 'Location added')); } catch { toast(L('Location കിട്ടിയില്ല. Phone-ലെ location ഓൺ ആക്കുക.', "Couldn't get location. Turn on location.")); } }}>
-          <MapPin size={16} aria-hidden /> {loc ? L('വീടിന്റെ location ഉണ്ട് ✓ (വീണ്ടും എടുക്കുക)', 'Home location set ✓ (take again)') : L('📍 എന്റെ വീടിന്റെ location ചേർക്കുക', '📍 Add my home location')}
-        </button>
+        <HomeLocation loc={loc} setLoc={setLoc} />
       </>)}
       <label htmlFor="cp">{L('ഫോൺ നമ്പർ', 'Phone number')}</label>
       <input id="cp" className="input" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
