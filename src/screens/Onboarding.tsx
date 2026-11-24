@@ -1,7 +1,8 @@
 import { loginEmail } from '../lib/owner';
 import { DISCLAIMER } from '../lib/store';
 import { useEffect, useRef, useState } from 'react';
-import { Check, Clock, Lock } from 'lucide-react';
+import { Check, Clock, Lock, MessageCircle } from 'lucide-react';
+import type { WaLogin } from '../data/api';
 import { useApp } from '../lib/app';
 import { Logo, Screen } from '../components/ui';
 import { DEMO_OTP } from '../data/demo';
@@ -9,6 +10,74 @@ import type { Place } from '../lib/geo';
 import { panchayatKey, panchayatName, type Panchayat } from '../lib/panchayat';
 import { PanchayatChooser } from './Panchayats';
 import type { Consent, UserProfile, Village, Ward } from '../types';
+import { PIN_RE, cleanPin, lookupPincode, pinFields, type PinInfo } from '../lib/pincode';
+
+/** PIN code of the person's home, after the check. */
+export type PinValue = Pick<UserProfile, 'pincode' | 'pinLat' | 'pinLng' | 'pinPlace'>;
+
+/** 6-digit PIN code input that checks the PIN with India Post. onChange(null) while it is not a good PIN. */
+export function PincodeField({ initial, onChange }: { initial?: string; onChange: (v: PinValue | null) => void }) {
+  const { L } = useApp();
+  const [pin, setPin] = useState(initial ?? '');
+  const [state, setState] = useState<{ s: 'idle' | 'checking' | 'ok' | 'bad' | 'offline'; info?: PinInfo | null }>({ s: 'idle' });
+  useEffect(() => {
+    if (!PIN_RE.test(pin)) { setState({ s: 'idle' }); onChange(null); return; }
+    let alive = true;
+    setState({ s: 'checking' }); onChange(null);
+    lookupPincode(pin).then((info) => {
+      if (!alive) return;
+      if (info) { setState({ s: 'ok', info }); onChange(pinFields(pin, info)); } else { setState({ s: 'bad' }); onChange(null); }
+    }).catch(() => {
+      // India Post not reachable: accept the PIN as typed.
+      if (!alive) return;
+      setState({ s: 'offline' }); onChange(pinFields(pin, null));
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin]);
+  return (
+    <div className="field">
+      <label htmlFor="pin">{L('പിൻകോഡ് (നിർബന്ധം)', 'PIN code (required)')}</label>
+      <input id="pin" className="input" inputMode="numeric" autoComplete="postal-code" maxLength={6} value={pin} placeholder="688562"
+        onChange={(e) => setPin(cleanPin(e.target.value))} style={{ fontSize: 18, letterSpacing: 2 }} />
+      {state.s === 'checking' && <span className="muted small">{L('പരിശോധിക്കുന്നു…', 'Checking…')}</span>}
+      {state.s === 'ok' && state.info && <span className="small" style={{ color: 'var(--green-dark)' }}>✓ {state.info.places.slice(0, 3).join(', ')}{state.info.places.length > 3 ? '…' : ''} · {state.info.district}, {state.info.state}</span>}
+      {state.s === 'bad' && <span className="small" style={{ color: '#c62828' }}>{L('ഈ പിൻകോഡ് കണ്ടെത്താനായില്ല. ശരിയാണോ എന്ന് നോക്കുക.', "This PIN code wasn't found. Please check it.")}</span>}
+      {state.s === 'offline' && <span className="muted small">{L('ഇപ്പോൾ പരിശോധിക്കാൻ പറ്റിയില്ല; ടൈപ്പ് ചെയ്തത് പോലെ സേവ് ചെയ്യും.', "Couldn't check it right now; it will be saved as typed.")}</span>}
+      {state.s === 'idle' && <span className="muted small">{L('നിങ്ങളുടെ അടുത്തുള്ള കടകളും സാധനങ്ങളും പണിക്കാരെയും ആദ്യം കാണിക്കാൻ.', 'Used to show shops, items and workers near you first.')}</span>}
+    </div>
+  );
+}
+
+/** Asks for the PIN code: for people who joined before it was required, and to change it from Profile. */
+export function PincodeStep({ back, onDone }: { back?: boolean; onDone?: () => void }) {
+  const { api, profile, refresh, L, toast } = useApp();
+  const [v, setV] = useState<PinValue | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!profile) return null;
+  async function save() {
+    if (!profile || !v) return;
+    setBusy(true);
+    try {
+      const { pinLat: _a, pinLng: _b, pinPlace: _c, ...rest } = profile; void _a; void _b; void _c;
+      await api.saveProfile({ ...rest, ...v });
+      await refresh();
+      toast(L('സേവ് ചെയ്തു', 'Saved'));
+      onDone?.();
+    } catch (e) {
+      console.error(e);
+      toast(L('സേവ് ചെയ്യാൻ പറ്റിയില്ല. Internet നോക്കി വീണ്ടും ശ്രമിക്കുക.', "Couldn't save. Check your internet and try again."));
+    } finally { setBusy(false); }
+  }
+  return (
+    <Screen title={L('നിങ്ങളുടെ പിൻകോഡ്', 'Your PIN code')} back={back ?? false}>
+      {!back && <p className="muted" style={{ fontSize: 15 }}>{L('തുടരാൻ നിങ്ങളുടെ വീടിന്റെ പിൻകോഡ് നൽകുക. അടുത്തുള്ള കടകളും സാധനങ്ങളും ആദ്യം കാണിക്കാൻ ഇത് ഉപയോഗിക്കും.', 'Enter the PIN code of your home to continue. It is used to show nearby shops and items first.')}</p>}
+      <PincodeField initial={back ? profile.pincode : ''} onChange={setV} />
+      <div className="spacer" />
+      <button className="btn block" disabled={busy || !v} onClick={save}>{busy ? L('സേവ് ചെയ്യുന്നു…', 'Saving…') : L('സേവ് ചെയ്യുക', 'Save')}</button>
+    </Screen>
+  );
+}
 
 export function Splash() {
   return (
@@ -51,6 +120,44 @@ export function LoginStep() {
   const refs = useRef<(HTMLInputElement | null)[]>([]);
   const clean = phone.replace(/\D/g, '');
   const valid = /^[6-9]\d{9}$/.test(clean);
+  const [wa, setWa] = useState<WaLogin | null>(null);
+
+  // WhatsApp login: keep checking until the person's message reaches the login server (and on coming back to the app).
+  useEffect(() => {
+    if (!wa) return;
+    let stop = false;
+    let inFlight = false;
+    let t = 0;
+    const tick = async () => {
+      if (stop || inFlight) return;
+      inFlight = true;
+      try {
+        if (await api.checkWaLogin(wa.session)) { stop = true; toast(L('ലോഗിൻ ചെയ്തു', 'Logged in')); return; }
+      } catch (e) {
+        if ((e as { code?: string }).code === 'wa/expired') {
+          stop = true; setWa(null);
+          setError(L('സമയം കഴിഞ്ഞു. വീണ്ടും "WhatsApp വഴി login" അമർത്തുക.', 'Time ran out. Tap "Log in with WhatsApp" again.'));
+          return;
+        }
+        console.error(e); // network hiccup: keep trying
+      } finally { inFlight = false; }
+      if (!stop) t = window.setTimeout(tick, 2500);
+    };
+    t = window.setTimeout(tick, 2500);
+    const onVisible = () => { if (document.visibilityState === 'visible') { window.clearTimeout(t); void tick(); } };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stop = true; window.clearTimeout(t); document.removeEventListener('visibilitychange', onVisible); };
+  }, [wa, api, toast, L]);
+
+  async function startWa() {
+    setBusy(true); setError('');
+    try {
+      setWa(await api.startWaLogin());
+    } catch (e) {
+      console.error(e);
+      setError(L('WhatsApp login ഇപ്പോൾ തുടങ്ങാൻ പറ്റിയില്ല. Internet നോക്കി വീണ്ടും ശ്രമിക്കുക, അല്ലെങ്കിൽ Google ഉപയോഗിക്കുക.', "Couldn't start WhatsApp login. Check your internet and try again, or use Google."));
+    } finally { setBusy(false); }
+  }
 
   useEffect(() => {
     if (timer <= 0) return;
@@ -139,11 +246,45 @@ export function LoginStep() {
     if (next.every(Boolean)) verify(next.join(''));
   }
 
+  if (wa) {
+    const link = `https://wa.me/${wa.waNumber}?text=${encodeURIComponent(wa.text)}`;
+    return (
+      <main className="content" style={{ paddingTop: 36, gap: 16 }}>
+        <button className="link" style={{ alignSelf: 'flex-start' }} onClick={() => setWa(null)}>← {L('തിരികെ', 'Back')}</button>
+        <h1 className="h1">{L('WhatsApp വഴി login', 'Log in with WhatsApp')}</h1>
+        <ol style={{ margin: 0, paddingLeft: 22, fontSize: 16, lineHeight: 1.6 }}>
+          <li>{L('താഴെയുള്ള പച്ച ബട്ടൺ അമർത്തുക. WhatsApp തുറക്കും, മെസേജ് തയ്യാറായിരിക്കും.', 'Tap the green button. WhatsApp opens with the message ready.')}</li>
+          <li>{L('WhatsApp-ൽ Send (➤) അമർത്തുക.', 'Press Send (➤) in WhatsApp.')}</li>
+          <li>{L('ഈ app-ലേക്ക് തിരിച്ചു വരിക — തനിയെ login ആകും.', 'Come back to this app — you will be logged in automatically.')}</li>
+        </ol>
+        <a className="btn block lg wa" href={link} target="_blank" rel="noreferrer">
+          <MessageCircle size={22} aria-hidden /> {L('WhatsApp തുറക്കുക', 'Open WhatsApp')}
+        </a>
+        <div className="card col" style={{ gap: 4, alignItems: 'center' }}>
+          <span className="muted small">{L('നിങ്ങളുടെ കോഡ്', 'Your code')}</span>
+          <b className="num" style={{ fontSize: 28, letterSpacing: 4 }}>{wa.code}</b>
+          <span className="muted small center">{L(`WhatsApp തുറന്നില്ലെങ്കിൽ, +${wa.waNumber} എന്ന നമ്പറിലേക്ക് "${wa.text}" എന്ന് WhatsApp ചെയ്യുക.`, `If WhatsApp didn't open, send "${wa.text}" to +${wa.waNumber} on WhatsApp.`)}</span>
+        </div>
+        <p className="muted center"><Clock size={14} style={{ verticalAlign: -2 }} /> {L('നിങ്ങളുടെ മെസേജിനായി കാത്തിരിക്കുന്നു…', 'Waiting for your message…')}</p>
+        {error && <div className="notice bad">{error}</div>}
+        <p className="muted small center">{L('ഏത് നമ്പറിൽ നിന്നാണോ WhatsApp അയയ്ക്കുന്നത്, അതാണ് നിങ്ങളുടെ login നമ്പർ. ഇത് പൂർണ്ണമായും free ആണ്.', 'The number you send the WhatsApp from becomes your login number. This is completely free.')}</p>
+        {api.mode === 'demo' && <div className="notice warn">{L('Demo: 4 സെക്കൻഡ് കഴിഞ്ഞ് തനിയെ login ആകും.', 'Demo: you will be logged in after 4 seconds.')}</div>}
+      </main>
+    );
+  }
+
   if (!sent) {
     return (
       <main className="content" style={{ paddingTop: 56, gap: 18 }}>
         <h1 className="h1">{L('സ്വാഗതം', 'Welcome')}</h1>
-        <p className="muted" style={{ fontSize: 16 }}>{L('ഫോണിലെ Google account ഉപയോഗിച്ച് ഒറ്റ ടാപ്പിൽ തുടങ്ങാം.', 'Start with one tap using the Google account on your phone.')}</p>
+        {api.waLoginEnabled && (<>
+          <p className="muted" style={{ fontSize: 16 }}>{L('നിങ്ങളുടെ മൊബൈൽ നമ്പർ ഉപയോഗിച്ച് WhatsApp വഴി free ആയി login ചെയ്യാം. SMS / OTP വേണ്ട.', 'Log in free with your mobile number through WhatsApp. No SMS / OTP needed.')}</p>
+          <button className="btn block lg wa" style={{ gap: 12 }} disabled={busy} onClick={startWa}>
+            <MessageCircle size={24} aria-hidden /> {busy ? L('തുറക്കുന്നു…', 'Opening…') : L('WhatsApp വഴി login (free)', 'Log in with WhatsApp (free)')}
+          </button>
+          <p className="muted center small">{L('അല്ലെങ്കിൽ', 'or')}</p>
+        </>)}
+        {!api.waLoginEnabled && <p className="muted" style={{ fontSize: 16 }}>{L('ഫോണിലെ Google account ഉപയോഗിച്ച് ഒറ്റ ടാപ്പിൽ തുടങ്ങാം.', 'Start with one tap using the Google account on your phone.')}</p>}
         <button className="btn block lg outline" style={{ color: 'var(--ink)', borderColor: 'var(--line-strong)', gap: 12 }} disabled={busy} onClick={google}>
           <svg width="24" height="24" viewBox="0 0 48 48" aria-hidden><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
           {busy ? L('തുറക്കുന്നു…', 'Opening…') : L('Google ഉപയോഗിച്ച് തുടരുക', 'Continue with Google')}
@@ -314,7 +455,7 @@ export function VillageStep({ current, onDone, back }: { current?: string; onDon
   );
 }
 
-export function ProfileStep({ draft, needPhone, wards, onDone }: { draft: Partial<UserProfile>; needPhone?: boolean; wards?: Ward[]; onDone: (name: string, ward: string, wantsProvider: boolean, phone: string) => void }) {
+export function ProfileStep({ draft, needPhone, wards, onDone }: { draft: Partial<UserProfile>; needPhone?: boolean; wards?: Ward[]; onDone: (name: string, ward: string, wantsProvider: boolean, phone: string, pin: PinValue) => void }) {
   const { L, lang } = useApp();
   const [name, setName] = useState(draft.name ?? '');
   const [ph, setPh] = useState('');
@@ -322,6 +463,7 @@ export function ProfileStep({ draft, needPhone, wards, onDone }: { draft: Partia
   const phOk = !needPhone || /^[6-9]\d{9}$/.test(phDigits);
   const [ward, setWard] = useState(draft.ward ?? '');
   const [prov, setProv] = useState(false);
+  const [pin, setPin] = useState<PinValue | null>(null);
   return (
     <Screen title={L('നിങ്ങളെക്കുറിച്ച്', 'About you')} back={false}>
       <div className="field">
@@ -347,6 +489,7 @@ export function ProfileStep({ draft, needPhone, wards, onDone }: { draft: Partia
           </select>
         ) : <input id="ward" className="input" inputMode="numeric" value={ward} onChange={(e) => setWard(e.target.value)} placeholder="7" />}
       </div>
+      <PincodeField onChange={setPin} />
       <button className="card tap" onClick={() => setProv(!prov)} role="checkbox" aria-checked={prov} style={{ outline: '2px solid var(--yellow)' }}>
         <span className={'check' + (prov ? ' on' : '')}>{prov && <Check size={18} />}</span>
         <span className="stack grow">
@@ -355,7 +498,7 @@ export function ProfileStep({ draft, needPhone, wards, onDone }: { draft: Partia
         </span>
       </button>
       <div className="spacer" />
-      <button className="btn block" disabled={name.trim().length < 2 || !phOk} onClick={() => onDone(name.trim(), ward.trim(), prov, needPhone ? '+91' + phDigits : '')}>{L('സേവ് ചെയ്യുക', 'Save')}</button>
+      <button className="btn block" disabled={name.trim().length < 2 || !phOk || !pin} onClick={() => pin && onDone(name.trim(), ward.trim(), prov, needPhone ? '+91' + phDigits : '', pin)}>{L('സേവ് ചെയ്യുക', 'Save')}</button>
     </Screen>
   );
 }

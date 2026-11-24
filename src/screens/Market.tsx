@@ -8,6 +8,9 @@ import { compressImage, prettyDate, telHref, timeAgo } from '../lib/util';
 import { isPlayApp } from '../lib/store';
 import { getPosition } from '../lib/geo';
 import { OrderButton } from './Orders';
+import { NearTag, PinOnlyChip, StatStars, useNear } from '../components/near';
+import { nearFirst } from '../lib/pincode';
+import type { RatingStat } from '../types';
 import {
   DEFAULT_PAY, LISTING_CATS, LISTING_KINDS, WEEK, boyActive, sellerActive,
   type Ad, type Listing, type ListingCat, type ListingKind, type Payment, type Seller,
@@ -40,14 +43,21 @@ export function Market() {
   const nav = useNavigate();
   const { api, reachIds, villages, lang, L, pair } = useApp();
   const [kind, setKind] = useState<ListingKind | ''>('');
+  const [onlyPin, setOnlyPin] = useState(false);
+  const near = useNear();
+  const [stats, setStats] = useState<Record<string, RatingStat>>({});
   const [list, reload, err] = useLoad(async () => {
     const all = await api.listListings(reachIds);
-    const sellers = await api.listSellers([...new Set(all.map((l) => l.sellerUid))]);
+    const uids = [...new Set(all.map((l) => l.sellerUid))];
+    const sellers = await api.listSellers(uids);
+    api.getRatingStats('shop', uids).then(setStats).catch(() => undefined);
     const ok = new Set(sellers.filter((s) => sellerActive(s)).map((s) => s.uid));
     return all.filter((l) => ok.has(l.sellerUid));
   }, [reachIds.join(',')]);
   const sel = (LISTING_CATS as string[]).includes(cat ?? '') ? (cat as ListingCat) : null;
-  const rows = (list ?? []).filter((l) => (!sel || l.category === sel) && (!kind || l.kind === kind));
+  // Nearest first: same PIN code, then by distance from my PIN area.
+  const rows = nearFirst((list ?? []).filter((l) => (!sel || l.category === sel) && (!kind || l.kind === kind)), near.pin, near.point)
+    .filter((r) => !onlyPin || r.same);
   const count = (c: ListingCat) => (list ?? []).filter((l) => l.category === c && (!kind || l.kind === kind)).length;
 
   return (
@@ -60,6 +70,7 @@ export function Market() {
       <div className="chips">
         <button className={'chip' + (!kind ? ' on' : '')} onClick={() => setKind('')}>{L('എല്ലാം', 'All')}</button>
         {LISTING_KINDS.map((k) => <button key={k} className={'chip' + (kind === k ? ' on' : '')} onClick={() => setKind(k)}>{pair(KIND_LABEL[k])}</button>)}
+        <PinOnlyChip on={onlyPin} set={setOnlyPin} />
       </div>
       <div className="chips">
         <button className={'chip' + (!sel ? ' on' : '')} onClick={() => nav('/market', { replace: true })}>{L('എല്ലാ സാധനവും', 'All items')}</button>
@@ -71,7 +82,7 @@ export function Market() {
       </div>
       {err && <LoadError retry={reload} />}
       {!list && !err && <Loading />}
-      {rows.map((l) => (
+      {rows.map(({ x: l, same, d }) => (
         <div key={l.id} className="card" style={{ display: 'block' }}>
           <div className="row nowrap" style={{ alignItems: 'flex-start', gap: 12 }}>
             {l.photo
@@ -85,6 +96,7 @@ export function Market() {
               <b style={{ fontSize: 16 }}>{l.title}</b>
               <b style={{ color: 'var(--green-dark)' }}>{priceText(l, L)}</b>
               {l.note && <span className="small">{l.note}</span>}
+              <span className="row small" style={{ gap: 8 }}><StatStars s={stats[l.sellerUid]} /><NearTag same={same} d={d} /></span>
               <span className="muted small">{l.sellerName}{l.ward ? ` · ${wardLabel(villages.find((v) => v.id === l.villageId), l.ward, lang)}` : ''} · {timeAgo(l.createdAt, lang)}</span>
             </span>
           </div>
@@ -126,7 +138,8 @@ export function SellForm() {
       if (mine) { const { id: _i, ...rest } = mine; void _i; setL(rest); }
     } else {
       setL({ villageId: profile.villageId, sellerUid: profile.uid, sellerName: profile.name, phone: profile.phone, ...(profile.ward ? { ward: profile.ward } : {}), kind: 'sell', category: 'milk', title: '', price: 0, unit: 'ലിറ്റർ', active: true, inStock: true,
-        ...(provider?.shopName ? { shopName: provider.shopName } : {}), ...(provider ? { lat: provider.lat, lng: provider.lng } : {}), createdAt: Date.now() });
+        ...(provider?.shopName ? { shopName: provider.shopName } : {}), ...(provider ? { lat: provider.lat, lng: provider.lng } : profile.pinLat != null ? { lat: profile.pinLat, lng: profile.pinLng } : {}),
+        ...(profile.pincode ? { pincode: profile.pincode } : {}), createdAt: Date.now() });
     }
     return api.getSeller(profile.uid);
   }, [id ?? '']);

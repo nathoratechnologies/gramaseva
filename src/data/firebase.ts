@@ -3,7 +3,7 @@ import { initializeApp, deleteApp } from 'firebase/app';
 import {
   getAuth, onAuthStateChanged, RecaptchaVerifier, signInWithPhoneNumber, signOut,
   GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
-  signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword, updatePassword,
+  signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword, updatePassword, signInWithCustomToken,
   type ConfirmationResult,
 } from 'firebase/auth';
 import {
@@ -14,7 +14,7 @@ import type { Api } from './api';
 import { byNewest } from './api';
 import type {
   Booking, News, Provider, Report, Review, RoleRequest, UserProfile, Village, Contact, Timing, BloodDonor, Complaint,
-  Listing, Seller, Ad, Payment, PaySettings, Enquiry, DeliveryBoy, Delivery,
+  Listing, Seller, Ad, Payment, PaySettings, Enquiry, DeliveryBoy, Delivery, OrderReview, RatingStat,
 } from '../types';
 import { DEFAULT_PAY, WEEK } from '../types';
 import { loginEmail } from '../lib/owner';
@@ -27,6 +27,9 @@ export const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
 };
+
+/** Free WhatsApp login server (Cloudflare Worker in whatsapp-login/). Empty = the WhatsApp button is hidden. */
+const WA_LOGIN_URL = ((import.meta.env.VITE_WA_LOGIN_URL as string | undefined) ?? '').replace(/\/+$/, '');
 
 export function createFirebaseApi(): Api {
   // Google sign-in by redirect fails on browsers that block third-party storage when authDomain differs from the
@@ -67,7 +70,34 @@ export function createFirebaseApi(): Api {
     mode: 'firebase',
 
     onAuth(cb) {
-      return onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, phone: u.phoneNumber ?? '', email: u.email ?? '' } : null));
+      return onAuthStateChanged(auth, async (u) => {
+        if (!u) return cb(null);
+        let phone = u.phoneNumber ?? '';
+        // WhatsApp logins: the verified number comes in the login token (phone_number claim).
+        if (!phone) {
+          try {
+            const c = (await u.getIdTokenResult()).claims;
+            const p = c.phone_number ?? c.wa_phone;
+            if (typeof p === 'string') phone = p;
+          } catch { /* offline */ }
+        }
+        cb({ uid: u.uid, phone, email: u.email ?? '' });
+      });
+    },
+    waLoginEnabled: !!WA_LOGIN_URL,
+    async startWaLogin() {
+      const r = await fetch(WA_LOGIN_URL + '/start', { method: 'POST' });
+      if (!r.ok) throw new Error('wa-start ' + r.status);
+      return r.json();
+    },
+    async checkWaLogin(session) {
+      const r = await fetch(WA_LOGIN_URL + '/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session }) });
+      if (!r.ok) throw new Error('wa-check ' + r.status);
+      const j = (await r.json()) as { status: 'waiting' | 'expired' | 'ok'; token?: string };
+      if (j.status === 'expired') throw Object.assign(new Error('expired'), { code: 'wa/expired' });
+      if (j.status !== 'ok' || !j.token) return false;
+      await signInWithCustomToken(auth, j.token);
+      return true;
     },
     async signInWithGoogle() {
       const provider = new GoogleAuthProvider();
@@ -295,6 +325,28 @@ export function createFirebaseApi(): Api {
     },
     async listReviews(providerId) {
       return (await many<Review>('reviews', where('providerId', '==', providerId))).sort(byNewest);
+    },
+    async addOrderReview(r) {
+      // One review per order and kind; the person's running total goes up in the same write (rules check both).
+      const id = `${r.kind}_${r.enquiryId}`;
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'orderReviews', id), { ...r, createdAt: Date.now() });
+      batch.set(doc(db, 'ratingStats', `${r.kind}_${r.targetUid}`), { sum: increment(r.stars), count: increment(1), lastReviewId: id }, { merge: true });
+      await batch.commit();
+    },
+    async listOrderReviews(kind, targetUid) {
+      return (await many<OrderReview>('orderReviews', where('targetUid', '==', targetUid), where('kind', '==', kind))).sort(byNewest);
+    },
+    async listMyOrderReviews(uid) {
+      return many<OrderReview>('orderReviews', where('fromUid', '==', uid));
+    },
+    async getRatingStats(kind, uids) {
+      const ids = uids.filter(Boolean).map((u) => `${kind}_${u}`);
+      if (!ids.length) return {};
+      const parts = await Promise.all(chunk30(ids).map((c) => many<RatingStat & { id: string }>('ratingStats', where(documentId(), 'in', c))));
+      const out: Record<string, RatingStat> = {};
+      for (const s of parts.flat()) out[s.id.slice(kind.length + 1)] = { sum: s.sum, count: s.count };
+      return out;
     },
 
     async createReport(r) {
@@ -547,7 +599,7 @@ export function createFirebaseApi(): Api {
   // Public lists are kept in memory for a few minutes; any write clears the cache so the user sees their own change at once.
   const CACHED: Partial<Record<keyof Api, number>> = {
     listVillages: 10, listApprovedProviders: 5, listContacts: 10, listTimings: 30, listDonors: 5,
-    getPaySettings: 2, listSellers: 5, listDeliveryBoys: 2, listListings: 3, listLiveAds: 5, listNews: 3,
+    getPaySettings: 2, listSellers: 5, getRatingStats: 5, listDeliveryBoys: 2, listListings: 3, listLiveAds: 5, listNews: 3,
   }; // minutes
   const store = new Map<string, { at: number; v: Promise<unknown> }>();
   const out = api as unknown as Record<string, unknown>;

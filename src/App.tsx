@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { HashRouter, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from './lib/app';
 import { resetDemo } from './data/demo';
-import { ConsentStep, LanguageStep, LoginStep, ProfileStep, Splash, VillageStep } from './screens/Onboarding';
+import { ConsentStep, LanguageStep, LoginStep, PincodeStep, ProfileStep, Splash, VillageStep } from './screens/Onboarding';
 import { Emergency, Home } from './screens/Home';
 import { NewsDetail, NewsList, SuggestNews } from './screens/News';
 import { MoreWorks } from './screens/Workers';
@@ -17,7 +17,7 @@ import { BookingRequest, ProviderProfile, ReportProvider, Services, WorkerList }
 import { Drivers, Ride } from './screens/Ride';
 import { BookingStatusScreen, MyBookings, RateBooking } from './screens/Bookings';
 import { ProviderDashboard, ProviderRegister } from './screens/Provider';
-import { ChangeVillage, DeleteData, PrivacyScreen, Profile, RequestAdmin } from './screens/Profile';
+import { ChangePincode, ChangeVillage, DeleteData, PrivacyScreen, Profile, RequestAdmin } from './screens/Profile';
 import { AdminApp } from './admin/Admin';
 import { PanchayatPeople, PanchayatPicker, WardList } from './screens/Panchayats';
 import { BloodDonors, BloodForm, ContactForm, DirectoryList, TimingForm, Timings } from './screens/Local';
@@ -38,10 +38,10 @@ function Onboarding() {
   if (!consent) return <ConsentStep onDone={setConsent} />;
   if (villageId === undefined) return <VillageStep onDone={(v) => setVillageId(v?.id ?? '')} />;
   return (
-    <ProfileStep draft={{}} needPhone={!authUser.phone} wards={villages.find((v) => v.id === villageId)?.wards} onDone={async (name, ward, wantsProvider, typedPhone) => {
+    <ProfileStep draft={{}} needPhone={!authUser.phone} wards={villages.find((v) => v.id === villageId)?.wards} onDone={async (name, ward, wantsProvider, typedPhone, pin) => {
       try {
         await api.saveProfile({
-          uid: authUser.uid, name, phone: authUser.phone || typedPhone, ...(authUser.email ? { email: authUser.email.toLowerCase() } : {}), villageId, ...(ward ? { ward } : {}), lang, role: 'user',
+          uid: authUser.uid, name, phone: authUser.phone || typedPhone, ...(authUser.email ? { email: authUser.email.toLowerCase() } : {}), villageId, ...(ward ? { ward } : {}), ...pin, lang, role: 'user',
           coordinatorOf: null, consent, createdAt: Date.now(),
         });
         await refresh();
@@ -64,6 +64,8 @@ function Shell() {
   if (!authReady) body = <Splash />;
   else if (!authUser) body = langChosen ? <LoginStep /> : <LanguageStep onDone={() => setLangChosen(true)} />;
   else if (!profile) body = <Onboarding />;
+  // PIN code is required: people who joined before it was asked add it once.
+  else if (!profile.pincode && !isAdmin) body = <PincodeStep />;
   else if (isAdmin) body = <Routes><Route path="/admin/*" element={<AdminApp />} /></Routes>;
   else {
     body = (
@@ -117,6 +119,7 @@ function Shell() {
         <Route path="/profile" element={<Profile />} />
         <Route path="/profile/privacy" element={<PrivacyScreen />} />
         <Route path="/profile/village" element={<ChangeVillage />} />
+        <Route path="/profile/pincode" element={<ChangePincode />} />
         <Route path="/profile/delete" element={<DeleteData />} />
         <Route path="/profile/request-admin" element={<RequestAdmin />} />
         <Route path="*" element={<Navigate to="/" replace />} />

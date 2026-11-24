@@ -193,7 +193,7 @@ export function CartScreen() {
       const now = Date.now();
       await api.createEnquiry({
         villageId: cart.villageId, toUid: cart.sellerUid, toName: cart.sellerName, toPhone: cart.phone, kind: 'listing', listingId: cart.lines[0].id, listingTitle: L('കട ഓർഡർ', 'Store order'),
-        fromUid: profile.uid, fromName: profile.name, fromPhone: phone.trim(),
+        fromUid: profile.uid, fromName: profile.name, fromPhone: phone.trim(), ...(profile.pincode ? { pincode: profile.pincode } : {}),
         items: cart.lines.map((x) => `${x.title} × ${x.qty}`).join(', ').slice(0, 300), freq, delivery,
         ...(delivery && address.trim() ? { address: address.trim().slice(0, 300) } : {}), ...(delivery && loc ? { lat: loc.lat, lng: loc.lng } : {}),
         ...(note.trim() ? { note: note.trim().slice(0, 300) } : {}),

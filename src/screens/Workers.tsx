@@ -1,4 +1,6 @@
 import { OrderButton } from './Orders';
+import { ReviewList } from './Reviews';
+import { statAvg } from '../types';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BadgeCheck, Flag, MapPin } from 'lucide-react';
@@ -152,6 +154,8 @@ export function ProviderProfile() {
   const [p, reloadP] = useLoad(() => api.getProvider(uid), [uid]);
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [reviews] = useLoad(() => api.listReviews(uid), [uid]);
+  // Shops / sellers are rated by their customers after an order.
+  const [shopStat] = useLoad(() => api.getRatingStats('shop', [uid]).then((s) => s[uid] ?? { sum: 0, count: 0 }).catch(() => ({ sum: 0, count: 0 })), [uid]);
   if (p === undefined) return <Screen title=""><Loading /></Screen>;
   if (p === null) return <Screen title=""><Empty text={L('ഈ ആളെ കണ്ടെത്താനായില്ല.', 'This person was not found.')} /></Screen>;
   const free = isFree(p);
@@ -174,7 +178,9 @@ export function ProviderProfile() {
         </span>)}
       </div>
       <div className="card" style={{ justifyContent: 'space-around', textAlign: 'center' }}>
-        <span className="stack"><b className="num">{p.ratingCount ? rating(p).toFixed(1) + ' ★' : '—'}</b><span className="muted small">{p.ratingCount} reviews</span></span>
+        {isShop(p.category)
+          ? <span className="stack"><b className="num">{shopStat?.count ? statAvg(shopStat).toFixed(1) + ' ★' : '—'}</b><span className="muted small">{shopStat?.count ?? 0} reviews</span></span>
+          : <span className="stack"><b className="num">{p.ratingCount ? rating(p).toFixed(1) + ' ★' : '—'}</b><span className="muted small">{p.ratingCount} reviews</span></span>}
         {p.experienceYears ? <span className="stack"><b className="num">{p.experienceYears} {L('വർഷം', 'yrs')}</b><span className="muted small">{L('പരിചയം', 'Experience')}</span></span> : null}
         {!isShop(p.category) && <span className="stack"><b className="num">{rateText(p, lang)}</b><span className="muted small">{L('നിരക്ക്', 'Rate')}</span></span>}
       </div>
@@ -183,6 +189,11 @@ export function ProviderProfile() {
       {isShop(p.category) && <a className="btn block outline" href={mapsLink(`${p.shopName ?? ''} ${p.address ?? ''}, ${village ? (village.nameEn || village.name) : ''}, Kerala`)} target="_blank" rel="noreferrer"><MapPin size={18} /> {L('Google Maps-ൽ കാണുക', 'View on Google Maps')}</a>}
       {p.vehicleNo && <div className="card"><span className="muted">{L('വാഹന നമ്പർ', 'Vehicle no.')}</span><b className="grow" style={{ textAlign: 'right' }}>{p.vehicleNo}</b></div>}
       {p.about && <p style={{ fontSize: 16 }}>{p.about}</p>}
+      {isShop(p.category) && !p.imported && (<>
+        <p className="section">{L('ഉപഭോക്താക്കളുടെ റിവ്യൂകൾ', 'Customer reviews')}</p>
+        <ReviewList kind="shop" uid={p.uid} />
+        <p className="muted small">{L('ഈ കടയിൽ നിന്ന് ഓർഡർ ചെയ്ത് കഴിഞ്ഞാൽ "ഓർഡറുകൾ → ഞാൻ അയച്ചത്" എന്നതിൽ റിവ്യൂ നൽകാം.', 'After an order from this shop, you can review it in Orders → Sent.')}</p>
+      </>)}
       {reviews && reviews.length > 0 && <p className="section">{L('അഭിപ്രായങ്ങൾ', 'Reviews')}</p>}
       {reviews?.slice(0, 5).map((r) => (
         <div key={r.id} className="card col" style={{ gap: 4 }}>

@@ -1,0 +1,24 @@
+# Cloudflare Worker for the free WhatsApp login. Setup: README.md (Malayalam).
+name = "gramaseva-wa-login"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Your WhatsApp business number with country code, digits only (e.g. 919xxxxxxxxx).
+WA_NUMBER = ""
+FIREBASE_PROJECT_ID = ""
+# The app's address(es), comma separated, e.g. "https://gramaseva.web.app,https://gramaseva.firebaseapp.com"
+ALLOWED_ORIGINS = ""
+
+# Run: npx wrangler kv namespace create LOGINS   → put the id it prints here.
+[[kv_namespaces]]
+binding = "LOGINS"
+id = ""
+
+# Secrets (never put these in this file). Set each one with: npx wrangler secret put <NAME>
+#   META_APP_SECRET        Meta app → App settings → Basic → App secret
+#   META_VERIFY_TOKEN      any long random text; type the same in Meta's webhook settings
+#   SESSION_SECRET         any long random text
+#   UID_SALT               any long random text — NEVER change it later (user ids are made from it)
+#   FIREBASE_CLIENT_EMAIL  from the service-account JSON ("client_email")
+#   FIREBASE_PRIVATE_KEY   from the service-account JSON ("private_key", the whole -----BEGIN … END----- text)

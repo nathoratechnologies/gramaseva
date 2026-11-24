@@ -2,7 +2,7 @@ import type {
   RoleRequest,
   Booking, BookingStatus, Category, News, Provider, ProviderStatus, Report, Review, Role,
   UserProfile, Village, VillageStats, Complaint, Contact, ContactKind, Timing, BloodDonor,
-  Listing, Seller, Ad, Payment, PaySettings, Enquiry, EnquiryReply, DeliveryBoy, Delivery, StaffLogin, StaffPosition,
+  Listing, Seller, Ad, Payment, OrderReview, OrderReviewKind, RatingStat, PaySettings, Enquiry, EnquiryReply, DeliveryBoy, Delivery, StaffLogin, StaffPosition,
 } from '../types';
 
 /**
@@ -11,6 +11,7 @@ import type {
  *  - firebase.ts  real data in Firebase (phone OTP + Firestore)
  */
 export interface AuthUser { uid: string; phone: string; email: string }
+export interface WaLogin { session: string; code: string; text: string; waNumber: string; expiresAt: number }
 
 export interface Api {
   mode: 'demo' | 'firebase';
@@ -21,6 +22,12 @@ export interface Api {
   signInWithEmail(email: string, password: string): Promise<void>;
   resetPassword(email: string): Promise<void>;
   sendOtp(phone: string, recaptchaContainerId: string): Promise<void>;
+  /** Free WhatsApp login is set up (VITE_WA_LOGIN_URL). */
+  waLoginEnabled: boolean;
+  /** Start a WhatsApp login: the person sends `text` to `waNumber` from their own WhatsApp. */
+  startWaLogin(): Promise<WaLogin>;
+  /** Check whether the WhatsApp message arrived; signs in and returns true when it did. */
+  checkWaLogin(session: string): Promise<boolean>;
   verifyOtp(code: string): Promise<void>;
   signOut(): Promise<void>;
 
@@ -77,6 +84,12 @@ export interface Api {
   // Reviews
   addReview(booking: Booking, stars: number, comment: string, customerName: string): Promise<void>;
   listReviews(providerId: string): Promise<Review[]>;
+  // Reviews of shops / sellers and delivery people after an order
+  addOrderReview(r: Omit<OrderReview, 'id' | 'createdAt'>): Promise<void>;
+  listOrderReviews(kind: OrderReviewKind, targetUid: string): Promise<OrderReview[]>;
+  listMyOrderReviews(uid: string): Promise<OrderReview[]>;
+  /** Rating totals by uid for these people. */
+  getRatingStats(kind: OrderReviewKind, uids: string[]): Promise<Record<string, RatingStat>>;
 
   // Reports / complaints
   createReport(r: Omit<Report, 'id'>): Promise<void>;

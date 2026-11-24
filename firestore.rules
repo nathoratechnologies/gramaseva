@@ -29,10 +29,13 @@ service cloud.firestore {
     function isOwner() { return isSuper(); }
     // Phone OTP users: the profile phone must be the verified number.
     // Google users have no verified number: they type it (+91 and 10 digits); coordinators check it before approving providers.
-    function tokenPhone() { return request.auth.token.get('phone_number', ''); }
+    // WhatsApp logins (whatsapp-login/ worker) carry the number WhatsApp verified as phone_number / wa_phone.
+    function tokenPhone() { return request.auth.token.get('phone_number', request.auth.token.get('wa_phone', '')); }
     function phoneOk(p) {
       return p is string && p.matches('^[+]91[6-9][0-9]{9}$') && (tokenPhone() == '' || p == tokenPhone());
     }
+    // India PIN code: 6 digits, not starting with 0. Required for every new profile.
+    function pinOk(p) { return p is string && p.matches('^[1-9][0-9]{5}$'); }
 
     // ---------- Villages: everyone can read, only super admin edits ----------
     match /villages/{villageId} {
@@ -61,11 +64,13 @@ service cloud.firestore {
         && request.resource.data.role == 'user'
         && request.resource.data.get('coordinatorOf', null) == null
         && phoneOk(request.resource.data.phone)
+        && pinOk(request.resource.data.get('pincode', ''))
         && (!('email' in request.resource.data) || request.resource.data.email == request.auth.token.get('email', '').lower()));
       // Users may edit their own profile but never their role or coordinator village;
       // only users without an OTP-verified number may change their phone.
       allow update: if signedIn() && (
         (request.auth.uid == uid && !changed().hasAny(['role', 'coordinatorOf', 'position'])
+          && (!changed().hasAny(['pincode']) || pinOk(request.resource.data.pincode))
           && (!changed().hasAny(['phone']) || (tokenPhone() == '' && phoneOk(request.resource.data.phone))))
         || isSuper()
         // President / VP: make a person a ward member of their panchayat, or remove a ward member.
@@ -143,6 +148,55 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/bookings/$(bookingId)).data.customerId == request.auth.uid
         && get(/databases/$(database)/documents/bookings/$(bookingId)).data.providerId == request.resource.data.providerId
         && get(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'done';
+      allow delete: if isSuper();
+    }
+
+    // ---------- Order reviews: the customer rates the shop / seller and the delivery person (one each per order) ----------
+    // id = '<kind>_<enquiryId>'. Shop: once the order is done or delivered. Delivery person: once something was delivered.
+    function enq(eid) { return get(/databases/$(database)/documents/enquiries/$(eid)).data; }
+    function delPath(eid) { return /databases/$(database)/documents/deliveries/$(eid); }
+    function wasDelivered(eid) {
+      return exists(delPath(eid)) && (get(delPath(eid)).data.status == 'delivered' || get(delPath(eid)).data.get('deliveredCount', 0) > 0);
+    }
+    match /orderReviews/{id} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['kind', 'enquiryId', 'targetUid', 'targetName', 'fromUid', 'fromName', 'stars', 'comment', 'createdAt'])
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.targetUid != request.auth.uid
+        && request.resource.data.stars is int && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && request.resource.data.comment is string && request.resource.data.comment.size() <= 300
+        && request.resource.data.kind in ['shop', 'delivery']
+        && id == request.resource.data.kind + '_' + request.resource.data.enquiryId
+        && enq(request.resource.data.enquiryId).fromUid == request.auth.uid
+        && ((request.resource.data.kind == 'shop'
+              && enq(request.resource.data.enquiryId).toUid == request.resource.data.targetUid
+              && (enq(request.resource.data.enquiryId).status == 'done' || wasDelivered(request.resource.data.enquiryId)))
+          || (request.resource.data.kind == 'delivery'
+              && wasDelivered(request.resource.data.enquiryId)
+              && get(delPath(request.resource.data.enquiryId)).data.deliveryUid == request.resource.data.targetUid
+              && get(delPath(request.resource.data.enquiryId)).data.customerUid == request.auth.uid));
+      allow delete: if isSuper();
+    }
+    // Running totals (id = '<kind>_<uid>'): only go up together with a brand-new review of that person, by its stars.
+    function statOk(id) {
+      let rid = request.resource.data.lastReviewId;
+      let r = getAfter(/databases/$(database)/documents/orderReviews/$(rid)).data;
+      let oldCount = resource == null ? 0 : resource.data.get('count', 0);
+      let oldSum = resource == null ? 0 : resource.data.get('sum', 0);
+      return request.resource.data.keys().hasOnly(['sum', 'count', 'lastReviewId'])
+        && rid is string
+        && (resource == null || rid != resource.data.get('lastReviewId', ''))
+        && !exists(/databases/$(database)/documents/orderReviews/$(rid))
+        && existsAfter(/databases/$(database)/documents/orderReviews/$(rid))
+        && r.fromUid == request.auth.uid
+        && id == r.kind + '_' + r.targetUid
+        && request.resource.data.count == oldCount + 1
+        && request.resource.data.sum == oldSum + r.stars;
+    }
+    match /ratingStats/{id} {
+      allow read: if true;
+      allow create, update: if signedIn() && statOk(id);
       allow delete: if isSuper();
     }
 

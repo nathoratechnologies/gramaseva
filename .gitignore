@@ -8,3 +8,9 @@ demo-dist
 # Built app files (not source)
 Claude outputs/
 *.apk
+
+# WhatsApp login worker
+whatsapp-login/.wrangler
+whatsapp-login/.dev.vars
+*service-account*.json
+*-firebase-adminsdk-*.json

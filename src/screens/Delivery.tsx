@@ -7,9 +7,11 @@ import { getPosition } from '../lib/geo';
 import { isPlayApp } from '../lib/store';
 import { sortedWards, wardLabel } from '../lib/panchayat';
 import { mapsEmbed, mapsLink, prettyDate, prettyPhone, telHref, timeAgo } from '../lib/util';
-import { boyActive, inMonth, type Delivery, type DeliveryBoy, type DeliveryStatus, type DeliveryVehicle, type Enquiry } from '../types';
+import { boyActive, inMonth, statAvg, type RatingStat, type Delivery, type DeliveryBoy, type DeliveryStatus, type DeliveryVehicle, type Enquiry } from '../types';
 import { FREQ_LABEL } from './Orders';
 import { usePay } from './Market';
+import { StatStars } from '../components/near';
+import { ReviewList } from './Reviews';
 
 export const VEHICLE: Record<DeliveryVehicle, [string, string, string]> = {
   walk: ['നടന്ന്', 'On foot', '🚶'], cycle: ['സൈക്കിൾ', 'Cycle', '🚲'], bike: ['ബൈക്ക് / സ്കൂട്ടർ', 'Bike / scooter', '🛵'], auto: ['ഓട്ടോ', 'Auto', '🛺'], other: ['മറ്റുള്ളവ', 'Other', '🚚'],
@@ -39,7 +41,7 @@ export function DeliveryJoin() {
     try {
       await api.joinDelivery({
         uid: profile.uid, name: f.name.trim(), phone: f.phone.trim(), villageId: profile.villageId, ...(f.ward ? { ward: f.ward } : {}),
-        vehicle: f.vehicle, ...(f.area.trim() ? { area: f.area.trim().slice(0, 120) } : {}), available: true, status: 'pending', freeUntil: 0, paidUntil: 0, createdAt: Date.now(),
+        vehicle: f.vehicle, ...(f.area.trim() ? { area: f.area.trim().slice(0, 120) } : {}), available: true, status: 'pending', freeUntil: 0, paidUntil: 0, ...(profile.pincode ? { pincode: profile.pincode } : {}), createdAt: Date.now(),
       });
       toast(L('അപേക്ഷ അയച്ചു. Admin approve ചെയ്താൽ തുടങ്ങാം.', 'Request sent. You can start once the admin approves.'));
       nav('/delivery', { replace: true });
@@ -76,13 +78,15 @@ export function DeliveryHome() {
   const play = isPlayApp();
   const [data, reload, err] = useLoad(async () => {
     if (!profile) return null;
-    const [boy, jobs] = await Promise.all([api.getDeliveryBoy(profile.uid), api.listDeliveries('deliveryUid', profile.uid)]);
+    const [boy, jobs, stats] = await Promise.all([api.getDeliveryBoy(profile.uid), api.listDeliveries('deliveryUid', profile.uid),
+      api.getRatingStats('delivery', [profile.uid]).catch(() => ({} as Record<string, RatingStat>))]);
     // Clear a stale "busy" mark (job delivered, cancelled or moved to someone else).
     if (boy?.busyWith && !jobs.some((j) => j.id === boy.busyWith && isBusyJob(j))) {
       try { await api.saveDeliveryBoy(boy.uid, { busyWith: '' }); boy.busyWith = ''; } catch { /* ignore */ }
     }
-    return { boy, jobs };
+    return { boy, jobs, stat: stats[profile.uid] };
   }, [profile?.uid ?? '']);
+  const [showReviews, setShowReviews] = useState(false);
   const [filter, setFilter] = useState<'open' | 'all'>('open');
   if (!profile) return null;
   if (err) return <Screen title={L('ഡെലിവറി', 'Delivery')}><LoadError retry={reload} /></Screen>;
@@ -114,6 +118,11 @@ export function DeliveryHome() {
             {!play && ` · ${L(`ആഴ്ച ₹${pay.deliveryFee}`, `₹${pay.deliveryFee}/week`)}`}
           </div>
           <div className="small muted">{L(`ആകെ ${total} ഡെലിവറി ചെയ്തു`, `${total} deliveries done`)}</div>
+          <div className="row small" style={{ gap: 8 }}>
+            {data.stat?.count ? <StatStars s={data.stat} /> : <span className="muted">{L('ഇതുവരെ റിവ്യൂ ഇല്ല', 'No reviews yet')}</span>}
+            {(data.stat?.count ?? 0) > 0 && <button className="link small" onClick={() => setShowReviews(!showReviews)}>{showReviews ? L('മറയ്ക്കുക', 'Hide') : L('റിവ്യൂകൾ കാണുക', 'See reviews')}</button>}
+          </div>
+          {showReviews && <ReviewList kind="delivery" uid={b.uid} />}
           <div className="small"><b>{L(`ഈ മാസം ഡെലിവറി ചാർജ്: ${rs(monthEarn)}`, `Delivery charges this month: ${rs(monthEarn)}`)}</b></div>
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
             <button className={'btn sm ' + (b.available ? '' : 'outline')} onClick={async () => { await api.saveDeliveryBoy(b.uid, { available: !b.available }); toast(L('സേവ് ചെയ്തു', 'Saved')); reload(); }}>
@@ -233,11 +242,19 @@ export function AssignDelivery({ e, d, onChange }: { e: Enquiry; d: Delivery | u
     let saved = ''; try { saved = localStorage.getItem('gs-pickup') ?? ''; } catch { /* ignore */ }
     return { address: saved || provider?.address || '', ...(provider ? { lat: provider.lat, lng: provider.lng } : {}) };
   });
-  const [boys] = useLoad(() => (open ? api.listDeliveryBoys(reachIds) : Promise.resolve(null)), [open, reachIds.join(',')]);
+  const [boyData] = useLoad(async () => {
+    if (!open) return null;
+    const list = await api.listDeliveryBoys(reachIds);
+    const stats = await api.getRatingStats('delivery', list.map((b) => b.uid)).catch(() => ({} as Record<string, RatingStat>));
+    return { list, stats };
+  }, [open, reachIds.join(',')]);
+  const boys = boyData?.list;
   const [busy, setBusy] = useState('');
   if (!profile || !e.delivery) return null;
   const live = d && !['rejected', 'cancelled'].includes(d.status);
   const isBusy = (b: DeliveryBoy) => !!b.busyWith && b.busyWith !== e.id;
+  // Delivery people from the customer's PIN code are listed first.
+  const nearCustomer = (b: DeliveryBoy) => !!e.pincode && b.pincode === e.pincode;
 
   async function assign(b: DeliveryBoy) {
     if (!profile || busy) return;
@@ -287,11 +304,12 @@ export function AssignDelivery({ e, d, onChange }: { e: Enquiry; d: Delivery | u
           </button>
           {!boys && <Loading />}
           {boys && boys.filter((b) => boyActive(b) && b.uid !== profile.uid).length === 0 && <p className="muted small">{L('ഇപ്പോൾ ലഭ്യമായ ഡെലിവറി ബോയ്സ് ഇല്ല.', 'No delivery people available right now.')}</p>}
-          {boys?.filter((b) => boyActive(b) && b.uid !== profile.uid).sort((a, b) => Number(isBusy(a)) - Number(isBusy(b)) || Number(b.available) - Number(a.available)).map((b) => (
+          {boys?.filter((b) => boyActive(b) && b.uid !== profile.uid).sort((a, b) => Number(isBusy(a)) - Number(isBusy(b)) || Number(b.available) - Number(a.available)
+            || Number(nearCustomer(b)) - Number(nearCustomer(a)) || statAvg(boyData?.stats[b.uid]) - statAvg(boyData?.stats[a.uid])).map((b) => (
             <div key={b.uid} className="row nowrap" style={{ gap: 8, background: '#fff', borderRadius: 10, padding: 8, opacity: b.available && !isBusy(b) ? 1 : 0.6 }}>
               <span style={{ fontSize: 22 }}>{VEHICLE[b.vehicle][2]}</span>
               <span className="stack grow" style={{ minWidth: 0 }}>
-                <b>{b.name}</b>
+                <span className="row" style={{ gap: 6 }}><b>{b.name}</b><StatStars s={boyData?.stats[b.uid]} /></span>
                 <span className="small muted">{isBusy(b) ? <span className="badge warn">{L('തിരക്കിൽ — വേറെ ഡെലിവറിയിൽ', 'Busy — on another delivery')}</span> : b.available ? L('ലഭ്യം', 'Available') : L('ഇപ്പോൾ ഓഫ്', 'Off now')}{b.ward ? ` · ${wardLabel(villages.find((v) => v.id === b.villageId), b.ward, lang)}` : ''}{b.area ? ` · ${b.area}` : ''}</span>
               </span>
               <a className="btn sm outline" href={telHref(b.phone)} aria-label={L('വിളിക്കുക', 'Call')}><Phone size={16} /></a>
@@ -317,9 +335,20 @@ export function DeliveryInfo({ d }: { d: Delivery | undefined }) {
 
 /** All active delivery people in the panchayat (for shops and sellers to call). */
 export function DeliveryBoys() {
-  const { api, reachIds, villages, lang, L, pair } = useApp();
-  const [list, reload, err] = useLoad(() => api.listDeliveryBoys(reachIds), [reachIds.join(',')]);
-  const rows = (list ?? []).filter((b) => boyActive(b)).sort((a, b) => Number(b.available) - Number(a.available));
+  const { api, profile, reachIds, villages, lang, L, pair } = useApp();
+  const [data, reload, err] = useLoad(async () => {
+    const list = await api.listDeliveryBoys(reachIds);
+    const stats = await api.getRatingStats('delivery', list.map((b) => b.uid)).catch(() => ({} as Record<string, RatingStat>));
+    return { list, stats };
+  }, [reachIds.join(',')]);
+  const list = data?.list;
+  const pin = profile?.pincode;
+  const samePin = (b: DeliveryBoy) => !!pin && b.pincode === pin;
+  // Available first, then people from my PIN code, then the best rated.
+  const avg = (b: DeliveryBoy) => statAvg(data?.stats[b.uid]);
+  const rows = (list ?? []).filter((b) => boyActive(b))
+    .sort((a, b) => Number(b.available) - Number(a.available) || Number(samePin(b)) - Number(samePin(a)) || avg(b) - avg(a));
+  const [openReviews, setOpenReviews] = useState('');
   return (
     <Screen title={L('ഡെലിവറി ബോയ്സ്', 'Delivery people')} right={<Link to="/delivery/join" className="iconbtn" aria-label={L('ചേരുക', 'Join')}><UserCheck size={22} /></Link>}>
       <p className="muted small">{L('ഓർഡർ വീട്ടിൽ എത്തിക്കാൻ ഇവരെ വിളിക്കാം. "ഓർഡറുകൾ" പേജിൽ നിന്ന് നേരിട്ട് ഏൽപ്പിക്കാനും പറ്റും.', 'Call them to deliver orders. You can also hand orders to them from the Orders page.')}</p>
@@ -328,6 +357,12 @@ export function DeliveryBoys() {
       {rows.map((b) => (
         <div key={b.uid} className="card" style={{ display: 'block', opacity: b.available ? 1 : 0.7 }}>
           <div className="row between"><b>{VEHICLE[b.vehicle][2]} {b.name}{Date.now() - b.createdAt < 7 * 86400000 && <span className="badge warn" style={{ marginLeft: 6 }}>{L('പുതിയത്', 'New')}</span>}</b><span className={b.available ? 'badge' : 'badge grey'}>{b.available ? L('ലഭ്യം', 'Available') : L('ഓഫ്', 'Off')}</span></div>
+          <div className="row small" style={{ gap: 8 }}>
+            <StatStars s={data?.stats[b.uid]} />
+            {samePin(b) && <span className="badge">📍 {L('നിങ്ങളുടെ പിൻകോഡ്', 'Your PIN code')}</span>}
+            {(data?.stats[b.uid]?.count ?? 0) > 0 && <button className="link small" onClick={() => setOpenReviews(openReviews === b.uid ? '' : b.uid)}>{openReviews === b.uid ? L('അഭിപ്രായങ്ങൾ മറയ്ക്കുക', 'Hide reviews') : L('അഭിപ്രായങ്ങൾ കാണുക', 'See reviews')}</button>}
+          </div>
+          {openReviews === b.uid && <ReviewList kind="delivery" uid={b.uid} />}
           <div className="small muted">{pair([VEHICLE[b.vehicle][0], VEHICLE[b.vehicle][1]])}{b.ward ? ` · ${wardLabel(villages.find((v) => v.id === b.villageId), b.ward, lang)}` : ''}{b.area ? ` · ${b.area}` : ''}</div>
           <div className="spacer" />
           <CallWhatsApp phone={b.phone} text={L('നമസ്കാരം, ഗ്രാമസേവയിൽ നിന്നാണ്. ഒരു delivery ഉണ്ട്.', 'Hello, from Gramaseva. I have a delivery.')} />

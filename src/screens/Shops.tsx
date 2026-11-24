@@ -8,6 +8,8 @@ import { CAT_LABEL, jobName, mapsLink } from '../lib/util';
 import { isPlayApp } from '../lib/store';
 import { usePay } from './Market';
 import { SHOP_CATS, isShop, type Category } from '../types';
+import { NearTag, PinOnlyChip, StatStars, useNear } from '../components/near';
+import { nearFirst } from '../lib/pincode';
 
 /** All shops / businesses of the panchayat being viewed, with category and ward filters. */
 export function Shops() {
@@ -16,9 +18,18 @@ export function Shops() {
   const { api, village, viewIds, villages, lang, L, pair } = useApp();
   const [ward, setWard] = useState('');
   const pay = usePay();
-  const [all, reload, err] = useLoad(async () => (await api.listApprovedProviders(null, viewIds)).filter((p) => isShop(p.category)), [viewIds.join(',')]);
+  const [onlyPin, setOnlyPin] = useState(false);
+  const near = useNear();
+  const [data, reload, err] = useLoad(async () => {
+    const shops = (await api.listApprovedProviders(null, viewIds)).filter((p) => isShop(p.category));
+    const stats = await api.getRatingStats('shop', shops.map((p) => p.uid)).catch(() => ({}));
+    return { shops, stats: stats as Awaited<ReturnType<typeof api.getRatingStats>> };
+  }, [viewIds.join(',')]);
+  const all = data?.shops;
   const sel = (SHOP_CATS as string[]).includes(cat ?? '') ? (cat as Category) : null;
-  const rows = (all ?? []).filter((p) => (!sel || p.category === sel) && (!ward || p.ward === ward));
+  // Nearest first: same PIN code, then by distance from my PIN area.
+  const rows = nearFirst((all ?? []).filter((p) => (!sel || p.category === sel) && (!ward || p.ward === ward)), near.pin, near.point)
+    .filter((r) => !onlyPin || r.same);
   const count = (c: Category) => (all ?? []).filter((p) => p.category === c).length;
   const wards = sortedWards(village, lang);
 
@@ -32,6 +43,7 @@ export function Shops() {
           <button key={c} className={'chip' + (sel === c ? ' on' : '')} onClick={() => nav(`/shops/${c}`, { replace: true })}>{pair(CAT_LABEL[c])}{all && count(c) ? ` (${count(c)})` : ''}</button>
         ))}
       </div>
+      <div className="chips"><PinOnlyChip on={onlyPin} set={setOnlyPin} /></div>
       {wards.length > 0 && (
         <select className="input" aria-label={L('വാർഡ്', 'Ward')} value={ward} onChange={(e) => setWard(e.target.value)}>
           <option value="">{L('എല്ലാ വാർഡും', 'All wards')}</option>
@@ -40,7 +52,7 @@ export function Shops() {
       )}
       {err && <LoadError retry={reload} />}
       {!all && !err && <Loading />}
-      {rows.map((p) => (
+      {rows.map(({ x: p, same, d }) => (
         <Link key={p.uid} to={`/provider/${p.uid}`} className="card" style={{ alignItems: 'flex-start' }}>
           <CatIcon cat={p.category} size={22} />
           <span className="stack grow" style={{ minWidth: 0 }}>
@@ -48,6 +60,7 @@ export function Shops() {
               <b style={{ fontSize: 16 }}>{p.shopName || p.name}</b>
               {p.verified && <span className="badge"><BadgeCheck size={13} aria-hidden />Verified</span>}
             </span>
+            <span className="row small" style={{ gap: 8 }}><StatStars s={data?.stats[p.uid]} /><NearTag same={same} d={d} /></span>
             <span className="muted small">{jobName(p, pair)}{p.ward ? ` · ${wardLabel(villages.find((v) => v.id === p.villageId), p.ward, lang)}` : ''}</span>
             {p.address && <span className="small"><MapPin size={12} aria-hidden /> {p.address}</span>}
             {p.openHours && <span className="small muted"><Clock size={12} aria-hidden /> {p.openHours}</span>}

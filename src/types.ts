@@ -65,6 +65,13 @@ export interface UserProfile {
   position?: StaffPosition | null;
   email?: string;
   consent?: Consent;
+  /** 6-digit India PIN code of the person's home (required for new profiles). */
+  pincode?: string;
+  /** Centre of the PIN code area (for "near me"), when it could be found. */
+  pinLat?: number;
+  pinLng?: number;
+  /** Post office / place name of the PIN code. */
+  pinPlace?: string;
   createdAt: number;
 }
 
@@ -99,6 +106,7 @@ export interface Provider {
   about?: string;
   /** Added by the super admin from the Excel sheet (no app account): call only, no booking. */
   imported?: boolean;
+  pincode?: string;
   createdAt: number;
 }
 
@@ -151,6 +159,24 @@ export interface Review {
   comment: string;
   createdAt: number;
 }
+
+/** Review of a shop / seller or a delivery person after an order (id = `${kind}_${enquiryId}`: one each per order). */
+export type OrderReviewKind = 'shop' | 'delivery';
+export interface OrderReview {
+  id: string;
+  kind: OrderReviewKind;
+  enquiryId: string;
+  targetUid: string; // shop owner / seller, or delivery person
+  targetName: string;
+  fromUid: string;
+  fromName: string;
+  stars: number;
+  comment: string;
+  createdAt: number;
+}
+/** Running total of a person's order reviews (id = `${kind}_${uid}`). */
+export interface RatingStat { sum: number; count: number }
+export const statAvg = (s: RatingStat | undefined) => (s?.count ? Math.round((s.sum / s.count) * 10) / 10 : 0);
 
 export interface Report {
   id: string;
@@ -284,6 +310,7 @@ export interface Listing {
   shopName?: string;
   lat?: number; // pick-up place, for the delivery charge
   lng?: number;
+  pincode?: string;
   createdAt: number;
 }
 
@@ -374,6 +401,7 @@ export interface Enquiry {
   address?: string;
   lat?: number; // customer's location (optional)
   lng?: number;
+  pincode?: string; // customer's PIN code
   note?: string;
   // Store orders: the cart and the bill (pay cash / UPI on delivery)
   lines?: OrderLine[];
@@ -404,6 +432,7 @@ export interface DeliveryBoy {
   warning?: string;
   freeUntil: number;
   paidUntil: number;
+  pincode?: string;
   createdAt: number;
 }
 export const boyActive = (b: Pick<DeliveryBoy, 'status' | 'freeUntil' | 'paidUntil'> | null | undefined, now = Date.now()) =>
