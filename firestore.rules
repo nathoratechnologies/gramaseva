@@ -30,7 +30,12 @@ service cloud.firestore {
     // Phone OTP users: the profile phone must be the verified number.
     // Google users have no verified number: they type it (+91 and 10 digits); coordinators check it before approving providers.
     // WhatsApp logins (whatsapp-login/ worker) carry the number WhatsApp verified as phone_number / wa_phone.
-    function tokenPhone() { return request.auth.token.get('phone_number', request.auth.token.get('wa_phone', '')); }
+    // Mobile + PIN logins use the hidden email 91XXXXXXXXXX@mobile.gramaseva.app (src/lib/owner.ts): that number is theirs.
+    function tokenPhone() {
+      let e = request.auth.token.get('email', '').lower();
+      let pinPhone = e.matches('^91[6-9][0-9]{9}@mobile[.]gramaseva[.]app$') ? '+' + e.split('@')[0] : '';
+      return request.auth.token.get('phone_number', request.auth.token.get('wa_phone', pinPhone));
+    }
     function phoneOk(p) {
       return p is string && p.matches('^[+]91[6-9][0-9]{9}$') && (tokenPhone() == '' || p == tokenPhone());
     }

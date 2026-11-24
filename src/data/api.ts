@@ -20,6 +20,9 @@ export interface Api {
   onAuth(cb: (user: AuthUser | null) => void): () => void;
   signInWithGoogle(): Promise<void>;
   signInWithEmail(email: string, password: string): Promise<void>;
+  /** Mobile number (10 digits) + 6-digit PIN. Free, no SMS; the number is not checked by OTP. */
+  signInWithMobilePin(tenDigits: string, pin: string): Promise<void>;
+  registerMobilePin(tenDigits: string, pin: string): Promise<void>;
   resetPassword(email: string): Promise<void>;
   sendOtp(phone: string, recaptchaContainerId: string): Promise<void>;
   /** Free WhatsApp login is set up (VITE_WA_LOGIN_URL). */

@@ -17,7 +17,7 @@ import type {
   Listing, Seller, Ad, Payment, PaySettings, Enquiry, DeliveryBoy, Delivery, OrderReview, RatingStat,
 } from '../types';
 import { DEFAULT_PAY, WEEK } from '../types';
-import { loginEmail } from '../lib/owner';
+import { loginEmail, mobileEmail, phoneFromMobileEmail } from '../lib/owner';
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
@@ -72,7 +72,7 @@ export function createFirebaseApi(): Api {
     onAuth(cb) {
       return onAuthStateChanged(auth, async (u) => {
         if (!u) return cb(null);
-        let phone = u.phoneNumber ?? '';
+        let phone = u.phoneNumber || phoneFromMobileEmail(u.email ?? '');
         // WhatsApp logins: the verified number comes in the login token (phone_number claim).
         if (!phone) {
           try {
@@ -116,6 +116,12 @@ export function createFirebaseApi(): Api {
     },
     async signInWithEmail(email, password) {
       await signInWithEmailAndPassword(auth, email.trim(), password);
+    },
+    async signInWithMobilePin(ten, pin) {
+      await signInWithEmailAndPassword(auth, mobileEmail(ten), pin);
+    },
+    async registerMobilePin(ten, pin) {
+      await createUserWithEmailAndPassword(auth, mobileEmail(ten), pin);
     },
     async resetPassword(email) {
       await sendPasswordResetEmail(auth, email.trim());

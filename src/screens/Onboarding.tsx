@@ -111,6 +111,72 @@ export function LanguageStep({ onDone }: { onDone: () => void }) {
  */
 const PHONE_OTP_ON = import.meta.env.VITE_PHONE_OTP === '1' || !import.meta.env.VITE_FIREBASE_API_KEY || import.meta.env.VITE_DEMO === '1';
 
+/** Free login: mobile number + own 6-digit PIN (no SMS). New users register; returning users log in. */
+function MobilePinForm() {
+  const { api, L, toast } = useApp();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [phone, setPhone] = useState('');
+  const [pin, setPin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const ten = phone.replace(/\D/g, '').slice(-10);
+  const phoneOk = /^[6-9]\d{9}$/.test(ten);
+  const pinOk = /^\d{6}$/.test(pin);
+  const weak = /^(\d)\1{5}$/.test(pin) || ['123456', '654321', '012345', '123123'].includes(pin);
+  const ok = phoneOk && pinOk && (mode === 'login' || !weak);
+  const digits = (s: string) => s.replace(/\D/g, '').slice(0, 6);
+
+  async function go() {
+    if (!ok || busy) return;
+    setBusy(true); setError('');
+    try {
+      if (mode === 'login') await api.signInWithMobilePin(ten, pin);
+      else await api.registerMobilePin(ten, pin);
+      toast(L('ലോഗിൻ ചെയ്തു', 'Logged in'));
+    } catch (e) {
+      const code = (e as { code?: string }).code ?? '';
+      console.error(e);
+      if (code === 'auth/email-already-in-use') { setMode('login'); setError(L('ഈ നമ്പറിൽ ഇതിനകം account ഉണ്ട്. നിങ്ങളുടെ PIN നൽകി Login ചെയ്യുക.', 'This number already has an account. Enter your PIN and log in.')); }
+      else if (code === 'auth/too-many-requests') setError(L('ഒരുപാട് തവണ തെറ്റി. കുറച്ച് കഴിഞ്ഞ് ശ്രമിക്കുക.', 'Too many wrong tries. Please wait a while.'));
+      else if (code === 'auth/network-request-failed') setError(L('Internet ഇല്ല. Connection നോക്കി വീണ്ടും ശ്രമിക്കുക.', 'No internet. Check your connection and try again.'));
+      else if (mode === 'login') setError(L('നമ്പർ അല്ലെങ്കിൽ PIN തെറ്റാണ്. പുതിയ ആളാണെങ്കിൽ താഴെ "പുതിയ account" അമർത്തുക.', 'Wrong number or PIN. New here? Tap "New account" below.'));
+      else setError(L('Account ഉണ്ടാക്കാൻ പറ്റിയില്ല. വീണ്ടും ശ്രമിക്കുക.', "Couldn't create the account. Please try again.") + (code ? ` (${code})` : ''));
+    } finally { setBusy(false); }
+  }
+
+  const pinInput = (id: string, v: string, set: (s: string) => void, label: string) => (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      {/* A new PIN is typed once and shown as digits, so a typing mistake is easy to see. */}
+      <input id={id} className="input" type={mode === 'register' ? 'text' : 'password'} inputMode="numeric" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} maxLength={6}
+        value={v} onChange={(e) => set(digits(e.target.value))} placeholder="••••••" style={{ fontSize: 20, letterSpacing: 6 }}
+        onKeyDown={(e) => { if (e.key === 'Enter') void go(); }} />
+    </div>
+  );
+
+  return (
+    <div className="card col" style={{ gap: 10 }}>
+      <b style={{ fontSize: 17 }}>{mode === 'login' ? L('മൊബൈൽ നമ്പർ + PIN', 'Mobile number + PIN') : L('പുതിയ account — മൊബൈൽ നമ്പർ + PIN', 'New account — mobile number + PIN')}</b>
+      <label className="input phone-input" htmlFor="mphone">
+        <b>+91</b>
+        <input id="mphone" inputMode="numeric" autoComplete="tel-national" maxLength={11} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="98765 43210"
+          style={{ border: 0, outline: 0, fontSize: 18, flex: 1, minWidth: 0, background: 'transparent' }} />
+      </label>
+      {pinInput('mpin', pin, setPin, mode === 'login' ? L('നിങ്ങളുടെ 6 അക്ക PIN', 'Your 6-digit PIN') : L('ഒരു 6 അക്ക PIN ഉണ്ടാക്കുക', 'Make a 6-digit PIN'))}
+      {mode === 'register' && <span className="muted small">{L('ഈ PIN ഓർത്ത് വെക്കുക. ഒരിക്കൽ login ചെയ്താൽ logout ചെയ്യുന്നത് വരെ വീണ്ടും ചോദിക്കില്ല.', "Remember this PIN. Once you're logged in, it isn't asked again until you log out.")}</span>}
+      {mode === 'register' && pinOk && weak && <span className="small" style={{ color: '#c62828' }}>{L('ഈ PIN എളുപ്പം ഊഹിക്കാം. വേറെ ഒന്ന് നൽകുക.', 'This PIN is easy to guess. Choose another.')}</span>}
+      {error && <div className="notice bad">{error}</div>}
+      <button className="btn block lg" disabled={!ok || busy} onClick={go}>
+        {busy ? L('കാത്തിരിക്കുക…', 'Please wait…') : mode === 'login' ? L('Login ചെയ്യുക', 'Log in') : L('Account ഉണ്ടാക്കുക', 'Create account')}
+      </button>
+      <button className="link" style={{ alignSelf: 'center' }} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setPin(''); }}>
+        {mode === 'login' ? L('പുതിയ ആളാണോ? പുതിയ account ഉണ്ടാക്കുക', 'New here? Create a new account') : L('Account ഉണ്ടോ? Login ചെയ്യുക', 'Have an account? Log in')}
+      </button>
+      <span className="muted small center">{L('SMS / OTP ഇല്ല, പൂർണ്ണമായും free. PIN ആരോടും പറയരുത്. PIN മറന്നാൽ admin-നെ ബന്ധപ്പെടുക.', 'No SMS / OTP, completely free. Keep your PIN secret. Forgot it? Contact the admin.')}</span>
+    </div>
+  );
+}
+
 export function LoginStep() {
   const { api, L, toast } = useApp();
   const [phone, setPhone] = useState('');
@@ -290,7 +356,8 @@ export function LoginStep() {
           </button>
           <p className="muted center small">{L('അല്ലെങ്കിൽ', 'or')}</p>
         </>)}
-        {!api.waLoginEnabled && <p className="muted" style={{ fontSize: 16 }}>{L('ഫോണിലെ Google account ഉപയോഗിച്ച് ഒറ്റ ടാപ്പിൽ തുടങ്ങാം.', 'Start with one tap using the Google account on your phone.')}</p>}
+        {!api.waLoginEnabled && <MobilePinForm />}
+        {!api.waLoginEnabled && <p className="muted center small">{L('അല്ലെങ്കിൽ', 'or')}</p>}
         <button className="btn block lg outline" style={{ color: 'var(--ink)', borderColor: 'var(--line-strong)', gap: 12 }} disabled={busy} onClick={google}>
           <svg width="24" height="24" viewBox="0 0 48 48" aria-hidden><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
           {busy ? L('തുറക്കുന്നു…', 'Opening…') : L('Google ഉപയോഗിച്ച് തുടരുക', 'Continue with Google')}

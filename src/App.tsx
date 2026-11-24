@@ -17,7 +17,7 @@ import { BookingRequest, ProviderProfile, ReportProvider, Services, WorkerList }
 import { Drivers, Ride } from './screens/Ride';
 import { BookingStatusScreen, MyBookings, RateBooking } from './screens/Bookings';
 import { ProviderDashboard, ProviderRegister } from './screens/Provider';
-import { ChangePincode, ChangeVillage, DeleteData, PrivacyScreen, Profile, RequestAdmin } from './screens/Profile';
+import { ChangePin, ChangePincode, ChangeVillage, DeleteData, PrivacyScreen, Profile, RequestAdmin } from './screens/Profile';
 import { AdminApp } from './admin/Admin';
 import { PanchayatPeople, PanchayatPicker, WardList } from './screens/Panchayats';
 import { BloodDonors, BloodForm, ContactForm, DirectoryList, TimingForm, Timings } from './screens/Local';
@@ -120,6 +120,7 @@ function Shell() {
         <Route path="/profile/privacy" element={<PrivacyScreen />} />
         <Route path="/profile/village" element={<ChangeVillage />} />
         <Route path="/profile/pincode" element={<ChangePincode />} />
+        <Route path="/profile/pin" element={<ChangePin />} />
         <Route path="/profile/delete" element={<DeleteData />} />
         <Route path="/profile/request-admin" element={<RequestAdmin />} />
         <Route path="*" element={<Navigate to="/" replace />} />

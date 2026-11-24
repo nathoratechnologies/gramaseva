@@ -17,6 +17,8 @@ function load(): SeedData {
   return makeSeed();
 }
 
+const readPins = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(KEY + '-pins') ?? '{}'); } catch { return {}; } };
+
 export function createDemoApi(): Api {
   let db = load();
   let session: AuthUser | null = null;
@@ -67,6 +69,22 @@ export function createDemoApi(): Api {
       emit();
     },
     async resetPassword() { await wait(null); },
+    async signInWithMobilePin(ten, pin) {
+      await wait(null);
+      const pins = readPins();
+      if (pins[ten] !== pin) throw Object.assign(new Error('bad'), { code: 'auth/invalid-credential' });
+      session = { uid: 'me-m' + ten, phone: '+91' + ten, email: '' };
+      save(); emit();
+    },
+    async registerMobilePin(ten, pin) {
+      await wait(null);
+      const pins = readPins();
+      if (pins[ten]) throw Object.assign(new Error('exists'), { code: 'auth/email-already-in-use' });
+      pins[ten] = pin;
+      try { localStorage.setItem(KEY + '-pins', JSON.stringify(pins)); } catch { /* ignore */ }
+      session = { uid: 'me-m' + ten, phone: '+91' + ten, email: '' };
+      save(); emit();
+    },
     async sendOtp(phone) {
       pendingPhone = phone;
       await wait(null);

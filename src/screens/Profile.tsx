@@ -6,7 +6,7 @@ import { useApp, useLoad } from '../lib/app';
 import { Avatar, Screen } from '../components/ui';
 import { prettyPhone } from '../lib/util';
 import { ConsentStep, PincodeStep, VillageStep } from './Onboarding';
-import { isOwner } from '../lib/owner';
+import { isOwner, phoneFromMobileEmail } from '../lib/owner';
 import { roleText } from '../types';
 import { DISCLAIMER } from '../lib/store';
 
@@ -51,6 +51,7 @@ export function Profile() {
           </select>
         </label>
       ) : null}
+      {!!phoneFromMobileEmail(authUser?.email ?? '') && <Row to="/profile/pin" icon={<Lock size={20} />} label={L('PIN മാറ്റുക', 'Change PIN')} />}
       <Row icon={<Languages size={20} />} label={L('ഭാഷ', 'Language')} value={lang === 'ml' ? 'മലയാളം' : 'English'}
         onClick={async () => { const l = lang === 'ml' ? 'en' : 'ml'; setLang(l); await api.saveProfile({ ...profile, lang: l }); }} />
       <Row to={provider ? '/work' : '/work/register'} icon={<HardHat size={20} />} label={provider ? L('എന്റെ പണി', 'My work') : L('സേവനദാതാവായി ചേരുക', 'Join as a provider')} />
@@ -84,6 +85,41 @@ export function PrivacyScreen() {
       toast(L('സേവ് ചെയ്തു', 'Saved'));
       nav(-1);
     }} />
+  );
+}
+
+/** Mobile + PIN users change their login PIN. */
+export function ChangePin() {
+  const { api, L, toast } = useApp();
+  const nav = useNavigate();
+  const [pin, setPin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const d = (s: string) => s.replace(/\D/g, '').slice(0, 6);
+  const weak = /^(\d)\1{5}$/.test(pin) || ['123456', '654321', '012345', '123123'].includes(pin);
+  const ok = /^\d{6}$/.test(pin) && !weak;
+  async function save() {
+    setBusy(true);
+    try {
+      await api.changePassword(pin);
+      toast(L('PIN മാറ്റി ✓', 'PIN changed ✓'));
+      nav(-1);
+    } catch (e) {
+      const code = (e as { code?: string }).code ?? '';
+      toast(code === 'auth/requires-recent-login'
+        ? L('സുരക്ഷയ്ക്കായി: Logout ചെയ്ത് പഴയ PIN വെച്ച് വീണ്ടും login ചെയ്ത ശേഷം PIN മാറ്റുക.', 'For safety: log out, log in again with your old PIN, then change it.')
+        : L('PIN മാറ്റാൻ പറ്റിയില്ല', "Couldn't change the PIN"));
+    } finally { setBusy(false); }
+  }
+  return (
+    <Screen title={L('PIN മാറ്റുക', 'Change PIN')}>
+      <div className="field"><label htmlFor="np">{L('പുതിയ 6 അക്ക PIN', 'New 6-digit PIN')}</label>
+        {/* Shown as digits (typed once), so a typing mistake is easy to see. */}
+        <input id="np" className="input" type="text" inputMode="numeric" autoComplete="new-password" maxLength={6} value={pin} onChange={(e) => setPin(d(e.target.value))} style={{ fontSize: 22, letterSpacing: 8 }} /></div>
+      <span className="muted small">{L('ഈ PIN ഓർത്ത് വെക്കുക. അടുത്ത തവണ login ചെയ്യുമ്പോൾ ഇത് വേണം.', 'Remember this PIN. You need it the next time you log in.')}</span>
+      {pin.length === 6 && weak && <span className="small" style={{ color: '#c62828' }}>{L('ഈ PIN എളുപ്പം ഊഹിക്കാം. വേറെ ഒന്ന് നൽകുക.', 'This PIN is easy to guess. Choose another.')}</span>}
+      <div className="spacer" />
+      <button className="btn block" disabled={!ok || busy} onClick={save}>{L('സേവ് ചെയ്യുക', 'Save')}</button>
+    </Screen>
   );
 }
 
