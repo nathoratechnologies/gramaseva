@@ -5,7 +5,7 @@ import { panchayatName, sortedWards, wardLabel } from '../lib/panchayat';
 import { useApp, useLoad } from '../lib/app';
 import { Avatar, Screen } from '../components/ui';
 import { prettyPhone } from '../lib/util';
-import { ConsentStep, VillageStep } from './Onboarding';
+import { ConsentStep, PincodeStep, VillageStep } from './Onboarding';
 import { isOwner } from '../lib/owner';
 import { roleText } from '../types';
 import { DISCLAIMER } from '../lib/store';
@@ -39,6 +39,7 @@ export function Profile() {
         </span>
       </div>
       <Row to="/profile/village" icon={<MapPin size={20} />} label={L('എന്റെ പഞ്ചായത്ത്', 'My panchayat')} value={village ? panchayatName(village, lang) : ''} />
+      <Row to="/profile/pincode" icon={<MapPin size={20} />} label={L('എന്റെ പിൻകോഡ്', 'My PIN code')} value={profile.pincode ? `${profile.pincode}${profile.pinPlace ? ' · ' + profile.pinPlace.split(',')[0] : ''}` : ''} />
       {village?.wards?.length ? (
         <label className="card" style={{ padding: '12px 14px' }}>
           <span style={{ color: 'var(--muted)', display: 'grid' }}><Users size={20} /></span>
@@ -84,6 +85,11 @@ export function PrivacyScreen() {
       nav(-1);
     }} />
   );
+}
+
+export function ChangePincode() {
+  const nav = useNavigate();
+  return <PincodeStep back onDone={() => nav(-1)} />;
 }
 
 export function ChangeVillage() {

@@ -7,6 +7,7 @@ import { prettyPhone, telHref, timeAgo, waHref } from '../lib/util';
 import { ORDER_FREQS, inMonth, type Delivery, type Enquiry, type EnquiryStatus, type OrderFreq } from '../types';
 import { AssignDelivery, DeliveryInfo } from './Delivery';
 import { getPosition } from '../lib/geo';
+import { RateOrder, canRateDelivery, canRateShop, reviewId } from './Reviews';
 
 export const FREQ_LABEL: Record<OrderFreq, [string, string]> = {
   once: ['ഒരു തവണ', 'One time'], daily: ['ദിവസവും', 'Daily'], weekly: ['ആഴ്ചതോറും', 'Weekly'], monthly: ['മാസത്തിൽ', 'Monthly'],
@@ -64,7 +65,7 @@ export function OrderForm() {
       await api.createEnquiry({
         villageId: target.villageId, toUid: to, toName: target.name, toPhone: target.phone, kind,
         ...(kind === 'listing' ? { listingId, listingTitle: target.title } : {}),
-        fromUid: profile.uid, fromName: profile.name, fromPhone: f.phone.trim(),
+        fromUid: profile.uid, fromName: profile.name, fromPhone: f.phone.trim(), ...(profile.pincode ? { pincode: profile.pincode } : {}),
         items: items.trim().slice(0, 300), ...(f.qty.trim() ? { qty: f.qty.trim().slice(0, 60) } : {}), freq, delivery: f.delivery,
         ...(f.delivery && f.address.trim() ? { address: f.address.trim().slice(0, 300) } : {}), ...(f.delivery && loc ? { lat: loc.lat, lng: loc.lng } : {}), ...(f.note.trim() ? { note: f.note.trim().slice(0, 300) } : {}),
         status: 'new', replies: [], createdAt: now, updatedAt: now,
@@ -114,12 +115,19 @@ export function Orders() {
   const [open, setOpen] = useState(true);
   const [data, reload, err] = useLoad(async () => {
     if (!profile) return null;
-    const [got, sent, asShop, asCustomer] = await Promise.all([api.listEnquiriesTo(profile.uid), api.listEnquiriesFrom(profile.uid),
-      api.listDeliveries('shopUid', profile.uid), api.listDeliveries('customerUid', profile.uid)]);
-    return { got, sent, deliveries: new Map([...asShop, ...asCustomer].map((d) => [d.id, d])) };
+    const [got, sent, asShop, asCustomer, mine] = await Promise.all([api.listEnquiriesTo(profile.uid), api.listEnquiriesFrom(profile.uid),
+      api.listDeliveries('shopUid', profile.uid), api.listDeliveries('customerUid', profile.uid), api.listMyOrderReviews(profile.uid).catch(() => [])]);
+    return { got, sent, deliveries: new Map([...asShop, ...asCustomer].map((d) => [d.id, d])), given: new Map(mine.map((r) => [r.id, r.stars])) };
   }, [profile?.uid ?? '']);
   if (!profile) return null;
-  const list = (data?.[tab] ?? []).filter((e) => (!freq || e.freq === freq) && (!open || !['done', 'declined', 'cancelled'].includes(e.status)));
+  // Orders I can still review stay in the list even when "hide finished" is on.
+  const needsReview = (e: Enquiry) => {
+    if (tab !== 'sent' || !data) return false;
+    const d = data.deliveries.get(e.id);
+    return (canRateShop(e, d) && !data.given.has(reviewId('shop', e.id))) || (canRateDelivery(d) && !data.given.has(reviewId('delivery', e.id)));
+  };
+  const list = (data?.[tab] ?? []).filter((e) => (!freq || e.freq === freq) && (!open || !['done', 'declined', 'cancelled'].includes(e.status) || needsReview(e)));
+  const toReview = (data?.sent ?? []).filter((e) => { const d = data?.deliveries.get(e.id); return (canRateShop(e, d) && !data?.given.has(reviewId('shop', e.id))) || (canRateDelivery(d) && !data?.given.has(reviewId('delivery', e.id))); }).length;
   const newCount = data?.got.filter((e) => e.status === 'new').length ?? 0;
   const regular = (data?.got ?? []).filter((e) => e.status === 'accepted' && e.freq !== 'once');
 
@@ -127,8 +135,9 @@ export function Orders() {
     <Screen title={L('ഓർഡറുകൾ / അന്വേഷണങ്ങൾ', 'Orders & enquiries')}>
       <div className="chips">
         <button className={'chip' + (tab === 'got' ? ' on' : '')} onClick={() => setSp({ tab: 'got' }, { replace: true })}>{L('എനിക്ക് വന്നത്', 'Received')}{newCount ? ` (${newCount})` : ''}</button>
-        <button className={'chip' + (tab === 'sent' ? ' on' : '')} onClick={() => setSp({ tab: 'sent' }, { replace: true })}>{L('ഞാൻ അയച്ചത്', 'Sent')}</button>
+        <button className={'chip' + (tab === 'sent' ? ' on' : '')} onClick={() => setSp({ tab: 'sent' }, { replace: true })}>{L('ഞാൻ അയച്ചത്', 'Sent')}{toReview ? ` · ⭐${toReview}` : ''}</button>
       </div>
+      {tab === 'sent' && toReview > 0 && <div className="notice warn">⭐ {L(`${toReview} ഓർഡറിന് റിവ്യൂ നൽകാനുണ്ട് — കടയ്ക്കും ഡെലിവറിക്കും സ്റ്റാർ നൽകുക.`, `${toReview} orders to review — rate the shop and the delivery person.`)}</div>}
       {tab === 'got' && regular.length > 0 && (
         <div className="notice" style={{ display: 'block' }}>
           <CalendarClock size={16} aria-hidden /> <b>{L('സ്ഥിരം ഓർഡറുകൾ', 'Regular orders')}:</b>{' '}
@@ -143,7 +152,7 @@ export function Orders() {
       {err && <LoadError retry={reload} />}
       {!data && !err && <Loading />}
       {tab === 'got' && <Link to="/delivery/boys" className="link small">🛵 {L('ഡെലിവറി ബോയ്സിനെ കാണുക / വിളിക്കുക', 'See / call delivery people')}</Link>}
-      {list.map((e) => <EnquiryCard key={e.id} e={e} mine={tab === 'got'} d={data?.deliveries.get(e.id)} onChange={reload} />)}
+      {list.map((e) => <EnquiryCard key={e.id} e={e} mine={tab === 'got'} d={data?.deliveries.get(e.id)} given={data?.given} onChange={reload} />)}
       {data && list.length === 0 && (
         <Empty icon={<ShoppingCart size={28} />} text={tab === 'got'
           ? L('ഇതുവരെ ഓർഡറുകൾ ഒന്നും വന്നിട്ടില്ല.', 'No orders yet.')
@@ -155,7 +164,7 @@ export function Orders() {
   );
 }
 
-function EnquiryCard({ e, mine, d, onChange }: { e: Enquiry; mine: boolean; d?: Delivery; onChange: () => void }) {
+function EnquiryCard({ e, mine, d, given, onChange }: { e: Enquiry; mine: boolean; d?: Delivery; given?: Map<string, number>; onChange: () => void }) {
   const { api, profile, lang, L, pair, toast } = useApp();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -200,6 +209,7 @@ function EnquiryCard({ e, mine, d, onChange }: { e: Enquiry; mine: boolean; d?: 
       </div>
       {mine && (!closed || d) && <AssignDelivery e={e} d={d} onChange={onChange} />}
       {!mine && <DeliveryInfo d={d} />}
+      {!mine && given && <RateOrder e={e} d={d} given={given} onDone={onChange} />}
       {!closed && (<>
         <div className="row nowrap" style={{ gap: 6, marginTop: 8 }}>
           <input className="input grow" style={{ minHeight: 40 }} maxLength={300} value={text} onChange={(ev) => setText(ev.target.value)} placeholder={L('മറുപടി എഴുതുക…', 'Write a reply…')} aria-label={L('മറുപടി', 'Reply')} />

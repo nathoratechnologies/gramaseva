@@ -2,7 +2,7 @@
 import type { Api } from './api';
 import { byNewest } from './api';
 import { makeSeed, type SeedData } from './seed';
-import type { Booking, Provider, RoleRequest, UserProfile, Contact, Timing, BloodDonor, Complaint, Listing, Seller, Ad, Payment, PaySettings, Enquiry, DeliveryBoy, Delivery } from '../types';
+import type { Booking, Provider, RoleRequest, UserProfile, Contact, Timing, BloodDonor, Complaint, Listing, Seller, Ad, Payment, PaySettings, Enquiry, DeliveryBoy, Delivery, OrderReview, RatingStat } from '../types';
 import { DEFAULT_PAY, WEEK } from '../types';
 import type { AuthUser } from './api';
 
@@ -22,6 +22,7 @@ export function createDemoApi(): Api {
   let session: AuthUser | null = null;
   let roleRequests: RoleRequest[] = [];
   let pendingPhone: string | null = null;
+  let waStarted: { session: string; at: number } | null = null;
   const listeners = new Set<(u: AuthUser | null) => void>();
 
   try {
@@ -29,8 +30,8 @@ export function createDemoApi(): Api {
     if (s) session = JSON.parse(s);
   } catch { /* ignore */ }
 
-  type Extra = { contacts: Contact[]; timings: Timing[]; donors: BloodDonor[]; complaints: Complaint[]; listings: Listing[]; sellers: Seller[]; ads: Ad[]; payments: Payment[]; pay: PaySettings; enquiries: Enquiry[]; boys: DeliveryBoy[]; deliveries: Delivery[] };
-  let extra: Extra = { contacts: [], timings: [], donors: [], complaints: [], listings: [], sellers: [], ads: [], payments: [], pay: { ...DEFAULT_PAY, upiId: 'demo@upi' }, enquiries: [], boys: [], deliveries: [] };
+  type Extra = { contacts: Contact[]; timings: Timing[]; donors: BloodDonor[]; complaints: Complaint[]; listings: Listing[]; sellers: Seller[]; ads: Ad[]; payments: Payment[]; pay: PaySettings; enquiries: Enquiry[]; boys: DeliveryBoy[]; deliveries: Delivery[]; orderReviews: OrderReview[] };
+  let extra: Extra = { contacts: [], timings: [], donors: [], complaints: [], listings: [], sellers: [], ads: [], payments: [], pay: { ...DEFAULT_PAY, upiId: 'demo@upi' }, enquiries: [], boys: [], deliveries: [], orderReviews: [] };
   try { const e = localStorage.getItem(KEY + '-extra'); if (e) extra = { ...extra, ...JSON.parse(e) }; } catch { /* ignore */ }
   const saveExtra = () => { try { localStorage.setItem(KEY + '-extra', JSON.stringify(extra)); } catch { /* ignore */ } };
 
@@ -76,6 +77,23 @@ export function createDemoApi(): Api {
       session = { uid: 'me-' + pendingPhone.replace(/\D/g, ''), phone: pendingPhone, email: '' };
       save();
       emit();
+    },
+    waLoginEnabled: true,
+    async startWaLogin() {
+      await wait(null);
+      const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+      waStarted = { session: 'demo-' + code, at: Date.now() };
+      return { session: waStarted.session, code, text: `GRAMASEVA LOGIN ${code}`, waNumber: '919000000000', expiresAt: Date.now() + 600000 };
+    },
+    async checkWaLogin(sid) {
+      await wait(null);
+      // Demo: the "message" arrives 4 seconds after the start.
+      if (!waStarted || waStarted.session !== sid || Date.now() - waStarted.at < 4000) return false;
+      waStarted = null;
+      session = { uid: 'me-wa-demo', phone: '+919446000111', email: '' };
+      save();
+      emit();
+      return true;
     },
     async signOut() {
       session = null;
@@ -252,6 +270,29 @@ export function createDemoApi(): Api {
     },
     async listReviews(providerId) {
       return wait(db.reviews.filter((r) => r.providerId === providerId).sort(byNewest));
+    },
+
+    async addOrderReview(r) {
+      const rid = `${r.kind}_${r.enquiryId}`;
+      if (extra.orderReviews.some((x) => x.id === rid)) throw new Error('already reviewed');
+      extra.orderReviews.push({ ...r, id: rid, createdAt: Date.now() });
+      saveExtra();
+      await wait(null);
+    },
+    async listOrderReviews(kind, targetUid) {
+      return wait(extra.orderReviews.filter((r) => r.kind === kind && r.targetUid === targetUid).sort(byNewest));
+    },
+    async listMyOrderReviews(uid) {
+      return wait(extra.orderReviews.filter((r) => r.fromUid === uid));
+    },
+    async getRatingStats(kind, uids) {
+      const out: Record<string, RatingStat> = {};
+      for (const r of extra.orderReviews) {
+        if (r.kind !== kind || !uids.includes(r.targetUid)) continue;
+        const s = (out[r.targetUid] ??= { sum: 0, count: 0 });
+        s.sum += r.stars; s.count += 1;
+      }
+      return wait(out);
     },
 
     async createReport(r) {

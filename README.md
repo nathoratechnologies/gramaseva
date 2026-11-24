@@ -23,7 +23,7 @@ Fill `.env` (copy from `.env.example`) with your Firebase web config to switch t
 ## Stack
 
 - React 18 + TypeScript + Vite, react-router (hash routing so it works on any static host)
-- Firebase Authentication (phone OTP, invisible reCAPTCHA) + Cloud Firestore
+- Firebase Authentication (Google, phone OTP, and free WhatsApp login via `whatsapp-login/` — see its README) + Cloud Firestore
 - PWA: `public/manifest.webmanifest`, `public/sw.js` (network-first cache of app files)
 - Fonts and icons are bundled (Anek Malayalam via @fontsource, lucide-react); no CDN calls
 
@@ -48,11 +48,13 @@ firestore.rules       security rules (roles, provider approval, one review per b
 | Collection | Key fields |
 | --- | --- |
 | `villages/{id}` | name, nameEn, panchayat, district, status (`live`/`soon`), lat, lng, panchayatPhone |
-| `users/{uid}` | name, phone (E.164), villageId, ward, lang, role (`user`/`coordinator`/`superadmin`), coordinatorOf, consent |
+| `users/{uid}` | name, phone (E.164), pincode (required), pinLat, pinLng, villageId, ward, lang, role (`user`/`coordinator`/`superadmin`), coordinatorOf, consent |
 | `providers/{uid}` | name, phone, villageId, category, rate, rateUnit, radiusKm, lat, lng, availableUntil, status, verified, ratingSum, ratingCount |
 | `news/{id}` | villageId, title, body, category, important, status (`pending`/`published`/`rejected`), postedBy, createdAt |
 | `bookings/{id}` | type (`service`/`ride`), customer*, provider*, villageId, category, date, slot, details, from, to, status, rated |
 | `reviews/{bookingId}` | providerId, customerId, stars, comment |
+| `orderReviews/{kind}_{enquiryId}` | kind (`shop`/`delivery`), enquiryId, targetUid, fromUid, stars, comment — one per order and kind |
+| `ratingStats/{kind}_{uid}` | sum, count — running total of a shop's / delivery person's order reviews |
 | `reports/{id}` | reportedBy, againstId, villageId, reason, status |
 
 Design decisions:

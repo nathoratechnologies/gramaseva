@@ -144,7 +144,8 @@ export function ProviderRegister() {
     try {
       const p: Provider = {
         uid: profile.uid, name: profile.name, phone: profile.phone, villageId: village.id, ...(profile.ward ? { ward: profile.ward } : {}), category: cat,
-        rate: shop ? 0 : Number(rate), rateUnit: unit, radiusKm: shop ? 5 : radius, lat: p0?.lat ?? village.lat, lng: p0?.lng ?? village.lng,
+        rate: shop ? 0 : Number(rate), rateUnit: unit, radiusKm: shop ? 5 : radius, lat: p0?.lat ?? profile.pinLat ?? village.lat, lng: p0?.lng ?? profile.pinLng ?? village.lng,
+        ...(profile.pincode ? { pincode: profile.pincode } : {}),
         availableUntil: p0?.availableUntil ?? 0, status: p0?.status ?? 'approved', verified: p0?.verified ?? false,
         ratingSum: p0?.ratingSum ?? 0, ratingCount: p0?.ratingCount ?? 0, createdAt: p0?.createdAt ?? Date.now(),
         ...(years ? { experienceYears: Number(years) } : {}),
