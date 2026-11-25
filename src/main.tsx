@@ -4,6 +4,7 @@ import '@fontsource/anek-malayalam/400.css';
 import '@fontsource/anek-malayalam/600.css';
 import '@fontsource/anek-malayalam/700.css';
 import './styles.css';
+import './motion.css';
 import App from './App';
 import { AppProvider } from './lib/app';
 import type { Api } from './data/api';

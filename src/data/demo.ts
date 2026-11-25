@@ -96,7 +96,7 @@ export function createDemoApi(): Api {
       save();
       emit();
     },
-    waLoginEnabled: true,
+    waLoginEnabled: false, // like the real app until the WhatsApp server is set up (startWaLogin below still works for testing)
     async startWaLogin() {
       await wait(null);
       const code = Math.random().toString(36).slice(2, 8).toUpperCase();

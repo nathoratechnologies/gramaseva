@@ -55,6 +55,18 @@ export function CatIcon({ cat, size = 28 }: { cat: Category; size?: number }) {
   );
 }
 
+/** Two rows of paddy-field hills drifting slowly behind a green header (decoration). */
+export function Hills({ front = '#43a866', back = '#2e9150' }: { front?: string; back?: string }) {
+  // One wave repeats every 390 units, so sliding the 200%-wide strip by half loops without a jump.
+  const wave = 'M0 40 Q 97 5 195 40 T 390 40 T 585 40 T 780 40 V90 H0Z';
+  return (
+    <>
+      <div className="hills back" aria-hidden><svg viewBox="0 0 780 90" preserveAspectRatio="none"><path d={wave} fill={back} /></svg></div>
+      <div className="hills front" aria-hidden><svg viewBox="0 0 780 90" preserveAspectRatio="none"><path d={wave} fill={front} /></svg></div>
+    </>
+  );
+}
+
 export function Logo({ size = 96, inverse = false }: { size?: number; inverse?: boolean }) {
   const bg = inverse ? '#ffffff' : '#2e7d32';
   const fg = inverse ? '#2e7d32' : '#ffffff';

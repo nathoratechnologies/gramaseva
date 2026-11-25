@@ -1,7 +1,7 @@
 // Live delivery tracking (like food-delivery apps): the customer and the shop see where the delivery person is.
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Navigation, Phone } from 'lucide-react';
+import { Bike, House, Navigation, Phone, Store } from 'lucide-react';
 import { useApp } from '../lib/app';
 import { Empty, Loading, Screen } from '../components/ui';
 import { LiveMap, type MapPoint } from '../components/LazyMap';
@@ -30,6 +30,41 @@ export function etaOf(d: Delivery, now = Date.now()) {
 }
 
 const STEPS: Delivery['status'][] = ['assigned', 'accepted', 'picked', 'delivered'];
+
+/** Home card while one of my orders is on its way: a small animated road from the shop to my house. */
+export function LiveOrderCard() {
+  const { api, profile, L } = useApp();
+  const [d, setD] = useState<Delivery | null>(null);
+  useEffect(() => {
+    if (!profile) return;
+    let alive = true;
+    api.listDeliveries('customerUid', profile.uid)
+      .then((list) => { if (alive) setD(list.find((x) => x.status === 'accepted' || x.status === 'picked') ?? null); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [api, profile]);
+  if (!d) return null;
+  const eta = etaOf(d);
+  const sub = eta?.min != null
+    ? L(`ഏകദേശം ${eta.min} മിനിറ്റിൽ എത്തും${eta.roadKm != null ? ` · ${eta.roadKm} km` : ''}`, `Arriving in about ${eta.min} min${eta.roadKm != null ? ` · ${eta.roadKm} km` : ''}`)
+    : d.status === 'picked' ? L(`${d.deliveryName} സാധനവുമായി വഴിയിൽ`, `${d.deliveryName} is on the way`) : L(`${d.deliveryName} കടയിലേക്ക് പോകുന്നു`, `${d.deliveryName} is going to the shop`);
+  return (
+    <Link to={`/track/${d.id}`} className="livecard">
+      <span className="row nowrap" style={{ gap: 8 }}>
+        <span className="pulse" aria-hidden />
+        <b className="grow" style={{ fontSize: 15 }}>{L('നിങ്ങളുടെ ഓർഡർ വരുന്നു', 'Your order is on the way')}</b>
+        <b className="small" style={{ color: 'var(--green)' }}>Live ›</b>
+      </span>
+      <span className="muted small">{sub}</span>
+      <span className="liveroad" aria-hidden style={{ display: 'block' }}>
+        <span className="line" />
+        <span className="end" style={{ left: 0, background: '#f3e5f5', color: '#6a1b9a' }}><Store size={16} /></span>
+        <span className="bikeic"><Bike size={18} /></span>
+        <span className="end" style={{ right: 0, background: 'var(--green-soft)', color: 'var(--green)' }}><House size={16} /></span>
+      </span>
+    </Link>
+  );
+}
 
 export function TrackDelivery() {
   const { id = '' } = useParams();

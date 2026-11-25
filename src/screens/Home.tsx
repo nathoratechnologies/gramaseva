@@ -8,7 +8,8 @@ import { OrdersCard } from './Orders';
 import { DeliveryCard } from './Delivery';
 import { CartBar, ProductCard, loadProducts, useCartAdd } from './Store';
 import { useApp, useLoad } from '../lib/app';
-import { BottomNav, NEWS_ICON, Screen } from '../components/ui';
+import { BottomNav, Hills, NEWS_ICON, Screen } from '../components/ui';
+import { LiveOrderCard } from './Track';
 import { CAT_LABEL, isFree, timeAgo } from '../lib/util';
 import { WORK_CATS, VEHICLE_CATS, SHOP_CATS, boyActive, isShop, type Category } from '../types';
 
@@ -46,7 +47,8 @@ export function Home() {
   return (
     <>
       <header className="hero">
-        <div className="row nowrap" style={{ alignItems: 'flex-start', gap: 10 }}>
+        <Hills />
+        <div className="row nowrap anim-up" style={{ alignItems: 'flex-start', gap: 10 }}>
           <div className="grow stack" style={{ gap: 2 }}>
             <span className="heropill">🌿 {L('നാടിന്റെ എല്ലാം ഒരിടത്ത്', 'Your village, all in one place')}</span>
             <Link to="/panchayats">
@@ -60,7 +62,7 @@ export function Home() {
           <Link to="/emergency" className="herobtn sos" aria-label={L('അടിയന്തര നമ്പറുകൾ', 'Emergency numbers')}><Siren size={22} aria-hidden /></Link>
           <Link to="/profile" className="herobtn" aria-label={L('പ്രൊഫൈൽ', 'Profile')}><b>{first.slice(0, 1) || '?'}</b></Link>
         </div>
-        <label className="searchbar" htmlFor="search">
+        <label className="searchbar anim-up d1" htmlFor="search">
           <Search size={20} color="var(--grey)" aria-hidden />
           <input id="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={L('"പാൽ", "പ്ലംബർ", "ഓട്ടോ" തിരയുക…', 'Search "milk", "plumber", "auto"…')} />
         </label>
@@ -74,6 +76,7 @@ export function Home() {
           </div>
         )}
 
+        <LiveOrderCard />
         <div className="qgrid">
           {QUICK.map((t) => (
             <Link key={t.to} to={t.to} className="qtile">
