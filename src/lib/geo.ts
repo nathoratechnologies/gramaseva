@@ -85,3 +85,34 @@ export async function placeName(lat: number, lng: number, lang: 'ml' | 'en'): Pr
     return [...new Set(parts)].slice(0, 2).join(', ');
   } catch { return ''; }
 }
+
+export interface PlaceHit { name: string; sub: string; lat: number; lng: number }
+/**
+ * Place suggestions while typing (Photon: free OpenStreetMap search made for type-ahead, no API key).
+ * Results near `near` come first; only places in India.
+ */
+export async function searchPlaces(q: string, near: { lat: number; lng: number } | null, signal?: AbortSignal): Promise<PlaceHit[]> {
+  const u = new URLSearchParams({ q, limit: '8' });
+  if (near) { u.set('lat', String(near.lat)); u.set('lon', String(near.lng)); u.set('zoom', '12'); u.set('location_bias_scale', '0.5'); }
+  const r = await fetch(`https://photon.komoot.io/api/?${u}`, { signal });
+  if (!r.ok) throw new Error('photon ' + r.status);
+  const j = await r.json();
+  const seen = new Set<string>();
+  const out: PlaceHit[] = [];
+  for (const f of j.features ?? []) {
+    const p = f.properties ?? {};
+    const [lng, lat] = f.geometry?.coordinates ?? [];
+    if (p.countrycode && p.countrycode !== 'IN') continue;
+    if (typeof lat !== 'number' || typeof lng !== 'number') continue;
+    const name = p.name || p.street || p.city || '';
+    if (!name) continue;
+    const sub = [p.name ? p.street : '', p.locality || p.district, p.city, p.county, p.state]
+      .filter((x: unknown, i: number, a: unknown[]): x is string => typeof x === 'string' && !!x && x !== name && a.indexOf(x) === i)
+      .slice(0, 3).join(', ');
+    const key = `${name}|${sub}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, sub, lat: Math.round(lat * 1e5) / 1e5, lng: Math.round(lng * 1e5) / 1e5 });
+  }
+  return out;
+}

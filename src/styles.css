@@ -375,3 +375,16 @@ textarea.input { padding: 12px 14px; min-height: 96px; resize: vertical; }
 .track-steps { display: flex; gap: 4px; }
 .track-steps span { flex: 1; height: 6px; border-radius: 3px; background: var(--line); }
 .track-steps span.on { background: var(--green); }
+
+/* Place suggestions under the From / To boxes */
+.ac { position: relative; }
+.ac-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 1000; margin: 0; padding: 4px; list-style: none; background: var(--surface, #fff); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.15); max-height: 300px; overflow-y: auto; }
+.ac-list li { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; }
+.ac-list li.on, .ac-list li:hover { background: var(--green-soft); }
+.ac-list li[aria-disabled] { cursor: default; background: none; }
+.ac-list li { gap: 14px; padding: 12px 10px; }
+.ac-ic { flex: none; color: var(--muted); }
+.ac-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.ac-name { font-weight: 400; }
+.ac-name b { font-weight: 800; }
+.ac-sub { color: var(--muted); font-size: 14px; }

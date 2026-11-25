@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { BadgeCheck, LocateFixed } from 'lucide-react';
+import { BadgeCheck, Clock, LocateFixed, MapPin } from 'lucide-react';
 import { useApp, useLoad } from '../lib/app';
-import { getPosition, placeName } from '../lib/geo';
+import { getPosition, placeName, searchPlaces, type PlaceHit } from '../lib/geo';
 import { myPoint } from '../lib/pincode';
 import { LiveMap, RoutePickMap, type MapPoint } from '../components/LazyMap';
 import { Avatar, CatIcon, Empty, LoadError, Loading, Screen, StarRow } from '../components/ui';
@@ -53,6 +53,14 @@ export function Ride() {
       if (name && n === seq.current[which] && autoText.current[which]) setText(name);
     });
   };
+  // A suggestion was chosen: its name stays as typed text, and its pin goes on the map.
+  const chose = (which: 'from' | 'to', h: PlaceHit) => {
+    autoText.current[which] = false;
+    seq.current[which]++; // ignore a name lookup still on its way
+    (which === 'from' ? setFrom : setTo)(h.name);
+    place(which, { lat: h.lat, lng: h.lng });
+  };
+  const near = fromPt ?? myPoint(profile, homeVillage);
   const typed = (which: 'from' | 'to', text: string) => {
     autoText.current[which] = !text.trim();
     (which === 'from' ? setFrom : setTo)(text);
@@ -101,11 +109,11 @@ export function Ride() {
       </p>
       <div className="field">
         <label htmlFor="from"><span className="dot" /> {L('എവിടെ നിന്ന്', 'From')}</label>
-        <input id="from" className="input" value={from} onFocus={() => setActive('from')} onChange={(e) => typed('from', e.target.value)} />
+        <PlaceInput id="from" value={from} near={near} onFocus={() => setActive('from')} onType={(t) => typed('from', t)} onPick={(h) => chose('from', h)} />
       </div>
       <div className="field">
         <label htmlFor="to"><span className="dot red" /> {L('എങ്ങോട്ട്', 'To')}</label>
-        <input id="to" className="input" value={to} onFocus={() => setActive('to')} onChange={(e) => typed('to', e.target.value)} placeholder={L('ഉദാ: ബസ് സ്റ്റാൻഡ്, ആശുപത്രി', 'e.g. Bus stand, hospital')} />
+        <PlaceInput id="to" value={to} near={near} onFocus={() => setActive('to')} onType={(t) => typed('to', t)} onPick={(h) => chose('to', h)} placeholder={L('ഉദാ: ബസ് സ്റ്റാൻഡ്, ആശുപത്രി', 'e.g. Bus stand, hospital')} />
       </div>
       <div className="grid3">
         {VEHICLE_CATS.map((c) => (
@@ -237,6 +245,85 @@ export function RideLive({ b }: { b: Booking }) {
       )}
       <LiveMap points={points} height={320} />
       {live && b.liveAt && !eta?.stale && <p className="muted small center" style={{ margin: 0 }}>📍 {L(`Live · ${timeAgo(b.liveAt, lang)} update ചെയ്തു`, `Live · updated ${timeAgo(b.liveAt, lang)}`)}</p>}
+    </div>
+  );
+}
+
+const RECENT_KEY = 'gs-recent-places';
+const recentPlaces = (): PlaceHit[] => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); } catch { return []; } };
+const rememberPlace = (h: PlaceHit) => {
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify([h, ...recentPlaces().filter((x) => x.name !== h.name || x.sub !== h.sub)].slice(0, 5))); } catch { /* storage full / off */ }
+};
+/** The typed letters in bold, the rest plain (like map apps). */
+function Marked({ text, q }: { text: string; q: string }) {
+  const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) return <>{text}</>;
+  return <>{text.slice(0, i)}<b>{text.slice(i, i + q.length)}</b>{text.slice(i + q.length)}</>;
+}
+
+/** Text box that suggests places while typing (only after the person types, not for text the app filled in). */
+function PlaceInput({ id, value, near, placeholder, onFocus, onType, onPick }: {
+  id: string; value: string; near: LL | null; placeholder?: string;
+  onFocus: () => void; onType: (t: string) => void; onPick: (h: PlaceHit) => void;
+}) {
+  const { L } = useApp();
+  const [hits, setHits] = useState<PlaceHit[]>([]);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [hi, setHi] = useState(-1);
+  const [q, setQ] = useState(''); // what to search: set only by typing
+  const nearRef = useRef(near);
+  nearRef.current = near;
+
+  useEffect(() => {
+    const t = q.trim();
+    if (t.length < 3) { setHits([]); setBusy(false); return; }
+    const ac = new AbortController();
+    setBusy(true);
+    const timer = window.setTimeout(() => {
+      searchPlaces(t, nearRef.current, ac.signal)
+        .then((h) => { setHits(h); setHi(-1); })
+        .catch(() => { if (!ac.signal.aborted) setHits([]); })
+        .finally(() => { if (!ac.signal.aborted) setBusy(false); });
+    }, 350);
+    return () => { ac.abort(); window.clearTimeout(timer); };
+  }, [q]);
+
+  const pick = (h: PlaceHit) => { rememberPlace(h); onPick(h); setOpen(false); setHits([]); setQ(''); };
+  const typing = q.trim().length >= 3;
+  // Before typing (or with 1–2 letters): places picked earlier, like "recent" in map apps.
+  const recent = typing ? [] : recentPlaces().filter((h) => !q.trim() || h.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const list = typing ? hits : recent;
+  const show = open && (typing || recent.length > 0);
+  return (
+    <div className="ac">
+      <input id={id} className="input" value={value} placeholder={placeholder} autoComplete="off"
+        role="combobox" aria-expanded={show} aria-controls={`${id}-list`} aria-autocomplete="list"
+        onFocus={() => { onFocus(); setOpen(true); }}
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => { onType(e.target.value); setQ(e.target.value); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (!show || !list.length) return;
+          if (e.key === 'ArrowDown') { e.preventDefault(); setHi((i) => (i + 1) % list.length); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((i) => (i <= 0 ? list.length - 1 : i - 1)); }
+          else if (e.key === 'Enter' && list[hi]) { e.preventDefault(); pick(list[hi]); }
+          else if (e.key === 'Escape') setOpen(false);
+        }} />
+      {show && (
+        <ul id={`${id}-list`} className="ac-list" role="listbox">
+          {list.map((h, i) => (
+            <li key={`${h.lat},${h.lng},${i}`} role="option" aria-selected={i === hi} className={i === hi ? 'on' : ''}
+              onMouseDown={(e) => { e.preventDefault(); pick(h); }}>
+              {typing ? <MapPin size={18} aria-hidden className="ac-ic" /> : <Clock size={18} aria-hidden className="ac-ic" />}
+              <span className="ac-txt">
+                <span className="ac-name"><Marked text={h.name} q={q.trim()} /></span>
+                {h.sub && <span className="ac-sub"> {h.sub}</span>}
+              </span>
+            </li>
+          ))}
+          {typing && !hits.length && <li className="muted small" aria-disabled>{busy ? L('തിരയുന്നു…', 'Searching…') : L('ഒന്നും കിട്ടിയില്ല. Map-ൽ തൊട്ട് സ്ഥലം കാണിക്കാം.', 'Nothing found. You can tap the place on the map.')}</li>}
+        </ul>
+      )}
     </div>
   );
 }
