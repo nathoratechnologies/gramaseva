@@ -232,6 +232,10 @@ service cloud.firestore {
           && changed().hasOnly(['status'])
           && ((resource.data.status == 'requested' && request.resource.data.status in ['accepted', 'rejected'])
             || (resource.data.status == 'accepted' && request.resource.data.status == 'done')))
+        // Ride driver: live position and "trip started" while the ride is accepted.
+        || (resource.data.providerId == request.auth.uid
+          && resource.data.status == 'accepted' && request.resource.data.status == 'accepted'
+          && changed().hasOnly(['liveLat', 'liveLng', 'liveAt', 'startedAt']))
         // Customer cancels an open booking, marks an accepted one done, or marks a finished one rated.
         // (A request the provider never accepted can't be marked done, so it can't get a rating.)
         || (resource.data.customerId == request.auth.uid

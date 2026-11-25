@@ -278,6 +278,34 @@ export function createDemoApi(): Api {
       save();
     },
 
+    async startRide(bid) {
+      db.bookings = db.bookings.map((b) => (b.id === bid ? { ...b, startedAt: Date.now() } : b));
+      save();
+    },
+    async trackRide(bid, at) {
+      db.bookings = db.bookings.map((b) => (b.id === bid ? { ...b, liveLat: at.lat, liveLng: at.lng, liveAt: Date.now() } : b));
+      save();
+    },
+    watchBooking(bid, cb) {
+      const send = () => {
+        // Demo: a sample driver drives to the pick-up point, "picks up", then drives to the drop point.
+        let b = db.bookings.find((x) => x.id === bid) ?? null;
+        if (b && b.status === 'accepted' && !b.providerId.startsWith('me-') && b.fromLat != null && b.fromLng != null) {
+          const goal = b.startedAt && b.toLat != null ? { lat: b.toLat, lng: b.toLng! } : { lat: b.fromLat, lng: b.fromLng };
+          const cur = b.liveLat != null ? { lat: b.liveLat, lng: b.liveLng! } : { lat: b.fromLat + 0.015, lng: b.fromLng + 0.012 };
+          const near = Math.abs(cur.lat - goal.lat) + Math.abs(cur.lng - goal.lng) < 0.0004;
+          const next = { lat: cur.lat + (goal.lat - cur.lat) * 0.2, lng: cur.lng + (goal.lng - cur.lng) * 0.2 };
+          b = { ...b, liveLat: next.lat, liveLng: next.lng, liveAt: Date.now(), ...(near && !b.startedAt ? { startedAt: Date.now() } : {}) };
+          const nb = b;
+          db.bookings = db.bookings.map((x) => (x.id === bid ? nb : x));
+          save();
+        }
+        cb(b ? structuredClone(b) : null);
+      };
+      send();
+      const t = setInterval(send, 3000);
+      return () => clearInterval(t);
+    },
     async addReview(booking: Booking, stars, comment, customerName) {
       db.reviews.push({ id: booking.id, providerId: booking.providerId, customerId: booking.customerId, customerName, stars, comment, createdAt: Date.now() });
       db.providers = db.providers.map((p: Provider) =>

@@ -72,3 +72,16 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Place> {
     villageEn: vEn || en?.locality || '',
   };
 }
+
+/** A short name for a map point (shop / road / area), e.g. to fill "From" / "To" after a pin is placed. '' when unknown. */
+export async function placeName(lat: number, lng: number, lang: 'ml' | 'en'): Promise<string> {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&accept-language=${lang}`);
+    if (!r.ok) return '';
+    const j = await r.json();
+    const a = j.address ?? {};
+    const parts = [j.name, a.road, a.village || a.hamlet || a.suburb || a.neighbourhood || a.town || a.city]
+      .filter((x: unknown): x is string => typeof x === 'string' && !!x.trim());
+    return [...new Set(parts)].slice(0, 2).join(', ');
+  } catch { return ''; }
+}

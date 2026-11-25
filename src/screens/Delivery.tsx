@@ -75,7 +75,7 @@ export function DeliveryJoin() {
  * While the delivery person has an accepted / picked-up job and this screen is open, send the phone's position
  * every ~15 s (less when standing still), so the shop and the customer can follow it. Keeps the screen awake.
  */
-function useShareLocation(ids: string[]) {
+export function useShareLocation(ids: string[], kind: 'delivery' | 'ride' = 'delivery') {
   const { api } = useApp();
   const [state, setState] = useState<{ at?: number; error?: 'denied' | 'gps' | 'send' }>({});
   const key = ids.join(',');
@@ -88,7 +88,7 @@ function useShareLocation(ids: string[]) {
     };
     const send = (lat: number, lng: number) => {
       last = { t: Date.now(), lat, lng };
-      Promise.all(ids.map((id) => api.trackLocation(id, { lat, lng })))
+      Promise.all(ids.map((id) => (kind === 'ride' ? api.trackRide(id, { lat, lng }) : api.trackLocation(id, { lat, lng }))))
         .then(() => setState({ at: Date.now() }))
         .catch((e) => { console.error(e); setState((s) => ({ ...s, error: 'send' })); });
     };

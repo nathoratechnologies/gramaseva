@@ -83,6 +83,12 @@ export interface Api {
   listMyBookings(uid: string): Promise<Booking[]>;
   listProviderBookings(uid: string): Promise<Booking[]>;
   updateBookingStatus(id: string, status: BookingStatus): Promise<void>;
+  /** Ride driver: the customer is in the vehicle (trip started). */
+  startRide(id: string): Promise<void>;
+  /** Ride driver's phone sends where it is now (live tracking). */
+  trackRide(id: string, at: { lat: number; lng: number }): Promise<void>;
+  /** Live updates of one booking (customer and driver). Returns stop(). */
+  watchBooking(id: string, cb: (b: Booking | null) => void): () => void;
 
   // Reviews
   addReview(booking: Booking, stars: number, comment: string, customerName: string): Promise<void>;

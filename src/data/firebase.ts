@@ -316,6 +316,17 @@ export function createFirebaseApi(): Api {
       await updateDoc(doc(db, 'bookings', id), { status });
     },
 
+    async startRide(id) {
+      await updateDoc(doc(db, 'bookings', id), { startedAt: Date.now() });
+    },
+    async trackRide(id, at) {
+      await updateDoc(doc(db, 'bookings', id), { liveLat: at.lat, liveLng: at.lng, liveAt: Date.now() });
+    },
+    watchBooking(id, cb) {
+      return onSnapshot(doc(db, 'bookings', id),
+        (s) => cb(s.exists() ? ({ ...(s.data() as object), id: s.id } as Booking) : null),
+        (e) => { console.error(e); cb(null); });
+    },
     async addReview(booking, stars, comment, customerName) {
       // One review per booking (review id = booking id). Rules check the booking belongs to this customer.
       const batch = writeBatch(db);

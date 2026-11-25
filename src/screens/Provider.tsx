@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Check, Clock, Pencil, ShieldCheck, X } from 'lucide-react';
+import { Check, Clock, Navigation, Pencil, ShieldCheck, X } from 'lucide-react';
 import { useApp, useLoad } from '../lib/app';
 import { Avatar, CallButton, Empty, Loading, Screen } from '../components/ui';
-import { ALL_JOBS, CAT_LABEL, canonJob, isFree, rating } from '../lib/util';
+import { ALL_JOBS, CAT_LABEL, canonJob, isFree, rating, timeAgo, todayISO } from '../lib/util';
 import { WORK_CATS, VEHICLE_CATS, SHOP_CATS, isVehicle, isShop, type Category, type Provider } from '../types';
 import { statusBadge, whenText } from './Bookings';
+import { useShareLocation } from './Delivery';
+import { directions, latLng } from './Ride';
 
 const DAY = 24 * 3600_000;
 
@@ -13,6 +15,9 @@ export function ProviderDashboard() {
   const { api, provider, refresh, L, lang, pair, toast } = useApp();
   const [list, reload] = useLoad(() => (provider ? api.listProviderBookings(provider.uid) : Promise.resolve([])), [provider?.uid]);
   const [busy, setBusy] = useState(false);
+  // Rides for today that I accepted: send my phone's position so the customer can follow the vehicle.
+  const liveRides = (list ?? []).filter((b) => b.type === 'ride' && b.status === 'accepted' && b.date <= todayISO()).map((b) => b.id);
+  const share = useShareLocation(liveRides, 'ride');
   if (!provider) {
     return (
       <Screen title={L('എന്റെ പണി', 'My work')}>
@@ -98,17 +103,51 @@ export function ProviderDashboard() {
       ))}
       {list && requests.length === 0 && <p className="muted">{L('ഇപ്പോൾ പുതിയ requests ഇല്ല.', 'No new requests right now.')}</p>}
       {accepted.length > 0 && <p className="section">{L('സ്വീകരിച്ച പണികൾ', 'Accepted jobs')}</p>}
-      {accepted.map((b) => (
-        <div key={b.id} className="card">
-          <span className="stack grow">
-            <b>{b.customerName} · {pair(CAT_LABEL[b.category])}</b>
-            <span className="muted small">{whenText(b, lang)}</span>
-            {statusBadge(b.status, L)}
-          </span>
-          <button className="btn sm outline" onClick={() => answer(b.id, 'done')}>{L('കഴിഞ്ഞു', 'Done')}</button>
-          <CallButton phone={b.customerPhone} />
+      {liveRides.length > 0 && (
+        <div className={'notice ' + (share.error ? 'bad' : '')} style={{ display: 'block' }}>
+          {share.error === 'denied'
+            ? <b>{L('Location അനുമതി ഇല്ല. Phone settings-ൽ ഈ app-ന് location അനുവദിക്കുക — യാത്രക്കാരന് നിങ്ങളെ map-ൽ കാണാൻ.', 'Location permission is off. Allow location for this app so the passenger can see you on the map.')}</b>
+            : share.error === 'gps'
+              ? <b>{L('GPS കിട്ടുന്നില്ല. Phone-ലെ location ഓൺ ആക്കുക.', "Can't get GPS. Turn on location on your phone.")}</b>
+              : <><b>📍 {L('Live location അയയ്ക്കുന്നു', 'Sharing live location')}</b>{share.at ? <span className="small"> · {timeAgo(share.at, lang)}</span> : null}</>}
+          <div className="small">{L('യാത്ര കഴിയുന്നത് വരെ ഈ screen തുറന്ന് വെക്കുക. App അടച്ചാൽ location പോകില്ല.', 'Keep this screen open until the trip is over. Location stops if the app is closed.')}</div>
         </div>
-      ))}
+      )}
+      {accepted.map((b) => {
+        const ride = b.type === 'ride';
+        const pickup = latLng(b.fromLat, b.fromLng), drop = latLng(b.toLat, b.toLng);
+        const next = b.startedAt ? drop : pickup;
+        return (
+          <div key={b.id} className="card col" style={{ gap: 8 }}>
+            <span className="row nowrap">
+              <span className="stack grow">
+                <b>{b.customerName} · {pair(CAT_LABEL[b.category])}</b>
+                <span className="muted small">{whenText(b, lang)}</span>
+                {statusBadge(b.status, L)}
+              </span>
+              <CallButton phone={b.customerPhone} />
+            </span>
+            {ride && (<>
+              <span className="small"><span className="dot" /> {b.from}</span>
+              <span className="small"><span className="dot red" /> {b.to}</span>
+              {b.startedAt && <span className="badge" style={{ alignSelf: 'flex-start' }}>{L('യാത്രയിൽ', 'On the trip')}</span>}
+              {next && (
+                <a className="btn sm outline" href={directions(next)} target="_blank" rel="noreferrer">
+                  <Navigation size={16} aria-hidden /> {b.startedAt ? L('ഇറങ്ങുന്ന സ്ഥലത്തേക്ക് വഴി', 'Directions to drop') : L('കയറുന്ന സ്ഥലത്തേക്ക് വഴി', 'Directions to pick-up')}
+                </a>
+              )}
+            </>)}
+            <span className="row nowrap">
+              {ride && !b.startedAt && (
+                <button className="btn sm grow" onClick={async () => { await api.startRide(b.id); toast(L('യാത്ര തുടങ്ങി', 'Trip started')); reload(); }}>
+                  {L('യാത്രക്കാരൻ കയറി — തുടങ്ങുക', 'Passenger is in — start')}
+                </button>
+              )}
+              <button className={'btn sm grow' + (ride && !b.startedAt ? ' outline' : '')} onClick={() => answer(b.id, 'done')}>{ride ? L('യാത്ര കഴിഞ്ഞു', 'Trip done') : L('കഴിഞ്ഞു', 'Done')}</button>
+            </span>
+          </div>
+        );
+      })}
     </Screen>
   );
 }

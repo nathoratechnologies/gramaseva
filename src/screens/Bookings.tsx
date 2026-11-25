@@ -5,6 +5,7 @@ import { useApp, useLoad } from '../lib/app';
 import { Avatar, CallButton, CatIcon, Empty, LoadError, Loading, Screen } from '../components/ui';
 import { CAT_LABEL, SLOTS, prettyDate, prettyPhone } from '../lib/util';
 import type { Booking, BookingStatus, Lang } from '../types';
+import { RideLive } from './Ride';
 
 export function statusBadge(s: BookingStatus, L: (a: string, b: string) => string) {
   const m: Record<BookingStatus, [string, string]> = {
@@ -23,14 +24,9 @@ export const whenText = (b: Booking, lang: Lang) =>
 export function BookingStatusScreen() {
   const { id = '' } = useParams();
   const { api, L, lang, pair, toast } = useApp();
-  const [b, reload] = useLoad(() => api.getBooking(id), [id]);
-
-  // Poll while waiting for the provider's answer.
-  useEffect(() => {
-    if (b?.status !== 'requested') return;
-    const t = setInterval(reload, 3000);
-    return () => clearInterval(t);
-  }, [b?.status, reload]);
+  // Live: the provider's answer and, for rides, where the vehicle is.
+  const [b, setB] = useState<Booking | null | undefined>(undefined);
+  useEffect(() => api.watchBooking(id, setB), [api, id]);
 
   if (b === undefined) return <Screen title=""><Loading /></Screen>;
   if (b === null) return <Screen title=""><Empty text={L('ബുക്കിംഗ് കണ്ടെത്താനായില്ല.', 'Booking not found.')} /></Screen>;
@@ -48,7 +44,6 @@ export function BookingStatusScreen() {
   async function set(s: BookingStatus) {
     await api.updateBookingStatus(b!.id, s);
     toast(s === 'cancelled' ? L('റദ്ദാക്കി', 'Cancelled') : L('സേവ് ചെയ്തു', 'Saved'));
-    reload();
   }
 
   return (
@@ -67,6 +62,7 @@ export function BookingStatusScreen() {
         </span>
         <CallButton phone={b.providerPhone} />
       </div>
+      {b.type === 'ride' && <RideLive b={b} />}
       <div className="card col" style={{ gap: 8 }}>
         {b.type === 'ride' ? (
           <>

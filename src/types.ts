@@ -145,6 +145,17 @@ export interface Booking {
   details: string;
   from?: string;
   to?: string;
+  /** Rides: pick-up and drop points chosen on the map. */
+  fromLat?: number;
+  fromLng?: number;
+  toLat?: number;
+  toLng?: number;
+  /** Rides: the driver tapped "customer is in" (trip started). */
+  startedAt?: number;
+  /** Rides: live position of the driver's phone while the ride is accepted. */
+  liveLat?: number;
+  liveLng?: number;
+  liveAt?: number;
   status: BookingStatus;
   rated: boolean;
   createdAt: number;
